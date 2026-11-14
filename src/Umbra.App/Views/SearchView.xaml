@@ -1,0 +1,63 @@
+<UserControl x:Class="Umbra.App.SearchView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Umbra.App">
+    <UserControl.Resources>
+        <Style x:Key="PosterCell" TargetType="ContentPresenter">
+            <Setter Property="Width" Value="190"/>
+        </Style>
+    </UserControl.Resources>
+    <DockPanel Margin="48,10,34,0">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,14,6">
+            <TextBlock Text="{local:T 'Buscar'}" Style="{StaticResource LargeTitle}"/>
+            <local:SearchBox x:Name="Query" Placeholder="Canales, películas o series" Large="True" Margin="0,16,0,0"
+                             MaxWidth="760" HorizontalAlignment="Left" Width="760"/>
+        </StackPanel>
+        <Grid>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="Results" Margin="0,0,14,48">
+                    <TextBlock x:Name="LiveHeader" Style="{StaticResource H2}" Margin="2,22,0,10" Visibility="Collapsed"/>
+                    <ItemsControl x:Name="LiveResults" ButtonBase.Click="Live_Click" Margin="-4,0" Focusable="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource TileButton}" Background="{StaticResource Surface1}" Width="356" Margin="4"
+                                        Padding="4,4,14,4" HorizontalContentAlignment="Stretch">
+                                    <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource ChannelTemplate}"/>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock x:Name="MoviesHeader" Style="{StaticResource H2}" Margin="2,30,0,4" Visibility="Collapsed"/>
+                    <ItemsControl x:Name="MovieResults" ItemTemplate="{StaticResource PosterTemplate}" ItemContainerStyle="{StaticResource PosterCell}"
+                                  ButtonBase.Click="Poster_Click" Margin="-7,0" Focusable="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                    <TextBlock x:Name="SeriesHeader" Style="{StaticResource H2}" Margin="2,30,0,4" Visibility="Collapsed"/>
+                    <ItemsControl x:Name="SeriesResults" ItemTemplate="{StaticResource PosterTemplate}" ItemContainerStyle="{StaticResource PosterCell}"
+                                  ButtonBase.Click="Poster_Click" Margin="-7,0" Focusable="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+            <StackPanel x:Name="HintPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,80" MaxWidth="420">
+                <TextBlock x:Name="HintGlyph" Style="{StaticResource Icon}" Text="&#xE721;" FontSize="40" HorizontalAlignment="Center"
+                           Foreground="{StaticResource FaintBrush}"/>
+                <TextBlock x:Name="HintText" Text="{local:T 'Busca en todo tu catálogo a la vez.'}" Style="{StaticResource Caption}" FontSize="15"
+                           Margin="0,16,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

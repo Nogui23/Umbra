@@ -1,0 +1,153 @@
+<UserControl x:Class="Umbra.App.LoginView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Umbra.App">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="40,0,40,70">
+            <!-- Language can be changed before signing in too -->
+            <Button x:Name="LanguageButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Margin="0,0,0,-46" Click="Language_Click"/>
+
+            <!-- Saved accounts: pick one and you are in -->
+            <StackPanel x:Name="PickerPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                <TextBlock Text="{local:T '¿Quién va a ver?'}" Style="{StaticResource LargeTitle}" FontSize="44" HorizontalAlignment="Center"/>
+                <TextBlock Text="{local:T 'Elige una cuenta para entrar.'}" Foreground="{StaticResource MutedBrush}" FontSize="16"
+                           HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                <Border x:Name="PickerError" Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineStrong}" BorderThickness="1"
+                        CornerRadius="14" Padding="16,12" Margin="0,24,0,0" MaxWidth="560" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE7BA;" FontSize="16" Margin="0,0,12,0" VerticalAlignment="Top"/>
+                        <TextBlock x:Name="PickerErrorText" TextWrapping="Wrap" MaxWidth="480" FontSize="13.5"/>
+                    </StackPanel>
+                </Border>
+                <ItemsControl x:Name="AccountsList" Margin="0,34,0,0" HorizontalAlignment="Center" MaxWidth="1100" Focusable="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel HorizontalAlignment="Center"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid x:Name="Cell" Width="204" Margin="9" Background="Transparent">
+                                <Button Style="{StaticResource TileButton}" Background="{StaticResource Surface1}" Padding="16,30,16,22"
+                                        Click="Open_Click" Tag="{Binding}">
+                                    <StackPanel>
+                                        <Border Width="88" Height="88" CornerRadius="44" Background="{StaticResource Surface3}" HorizontalAlignment="Center">
+                                            <TextBlock Text="{Binding Name, Converter={StaticResource Initial}}" FontFamily="{StaticResource DisplayFont}"
+                                                       FontSize="36" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <TextBlock Text="{Binding Name}" FontSize="15.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                   TextAlignment="Center" Margin="0,18,0,0"/>
+                                        <TextBlock Text="{Binding KindText, Mode=OneWay}" Style="{StaticResource Caption}" TextAlignment="Center" Margin="0,4,0,0"/>
+                                        <TextBlock Text="{Binding DetailText, Mode=OneWay}" FontSize="12" Foreground="{StaticResource FaintBrush}"
+                                                   TextAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel x:Name="Tools" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6" Opacity="0">
+                                    <Button Content="&#xE70F;" Style="{StaticResource IconButton}" Width="32" Height="32" FontSize="12"
+                                            ToolTip="{local:T 'Editar'}" Click="Edit_Click" Tag="{Binding}"/>
+                                    <Button Content="&#xE74D;" Style="{StaticResource IconButton}" Width="32" Height="32" FontSize="12"
+                                            ToolTip="{local:T 'Eliminar'}" Click="Delete_Click" Tag="{Binding}"/>
+                                </StackPanel>
+                            </Grid>
+                            <DataTemplate.Triggers>
+                                <Trigger SourceName="Cell" Property="IsMouseOver" Value="True">
+                                    <Trigger.EnterActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Tools" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.16"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.EnterActions>
+                                    <Trigger.ExitActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Tools" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.22"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.ExitActions>
+                                </Trigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Style="{StaticResource SubtleButton}" HorizontalAlignment="Center" Margin="0,26,0,0" Click="Add_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE710;" FontSize="12" Margin="0,0,9,0"/>
+                        <TextBlock Text="{local:T 'Añadir cuenta'}"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- Add / edit an account -->
+            <Border x:Name="FormPanel" Style="{StaticResource Card}" Width="470" Padding="38,32,38,32"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                <StackPanel>
+                    <Button x:Name="BackToPicker" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Margin="-14,-8,0,10"
+                            Click="BackToPicker_Click" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE76B;" FontSize="11" Margin="0,1,7,0"/>
+                            <TextBlock Text="{local:T 'Cuentas'}"/>
+                        </StackPanel>
+                    </Button>
+                    <TextBlock x:Name="FormTitle" Text="{local:T 'Conecta tu IPTV'}" Style="{StaticResource LargeTitle}" FontSize="30"/>
+                    <TextBlock Text="{local:T 'Tus datos se guardan cifrados, solo en este equipo.'}" Style="{StaticResource Caption}" FontSize="13.5"
+                               Margin="1,6,0,0" TextWrapping="Wrap"/>
+                    <local:Segmented x:Name="Tabs" Items="Xtream Codes|Lista M3U" Margin="0,24,0,0"/>
+
+                    <StackPanel x:Name="XtreamForm">
+                        <TextBlock Text="{local:T 'Servidor'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="XServer"/>
+                        <TextBlock Text="{local:T 'Por ejemplo, http://servidor.com:8080'}" FontSize="12" Foreground="{StaticResource FaintBrush}" Margin="4,6,0,0"/>
+                        <TextBlock Text="{local:T 'Usuario'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="XUser"/>
+                        <TextBlock Text="{local:T 'Contraseña'}" Style="{StaticResource FieldLabel}"/>
+                        <PasswordBox x:Name="XPass"/>
+                        <TextBlock Text="{local:T 'Nombre (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="XName"/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="M3uForm" Visibility="Collapsed">
+                        <TextBlock Text="{local:T 'Lista M3U (enlace o archivo)'}" Style="{StaticResource FieldLabel}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="MUrl"/>
+                            <Button Grid.Column="1" Style="{StaticResource GlassIconButton}" Width="44" Height="44" Margin="8,0,0,0"
+                                    Content="&#xE8E5;" ToolTip="{local:T 'Elegir un archivo'}" Click="Browse_Click"/>
+                        </Grid>
+                        <TextBlock Text="{local:T 'Con un enlace get.php?username=…&amp;password=… se usa la API Xtream completa.'}" FontSize="12"
+                                   Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap" Margin="4,6,0,0"/>
+                        <TextBlock Text="{local:T 'Guía EPG en XMLTV (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="MEpg"/>
+                        <TextBlock Text="{local:T 'Nombre (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="MName"/>
+                    </StackPanel>
+
+                    <Border x:Name="ErrorBox" Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineStrong}" BorderThickness="1"
+                            CornerRadius="12" Padding="14,11" Margin="0,18,0,0" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE7BA;" FontSize="15" Margin="0,1,11,0" VerticalAlignment="Top"/>
+                            <TextBlock x:Name="ErrorText" Grid.Column="1" TextWrapping="Wrap" FontSize="13.5"/>
+                        </Grid>
+                    </Border>
+
+                    <Button x:Name="ConnectButton" Style="{StaticResource AccentButton}" Margin="0,24,0,0" Padding="24,13" IsDefault="True" Click="Connect_Click">
+                        <Grid>
+                            <TextBlock x:Name="ConnectText" Text="{local:T 'Conectar'}"/>
+                            <local:Spinner x:Name="Busy" Width="20" Height="20" Stroke="Black" Visibility="Collapsed"/>
+                        </Grid>
+                    </Button>
+                    <Button x:Name="CancelEditButton" Content="{local:T 'Cancelar edición'}" Style="{StaticResource GhostButton}" Margin="0,8,0,-8"
+                            Visibility="Collapsed" Click="CancelEdit_Click"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
