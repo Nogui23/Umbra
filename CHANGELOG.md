@@ -9,7 +9,32 @@ El número está en [Directory.Build.props](Directory.Build.props) y aparece en 
 
 ## [Sin publicar]
 
-_Nada todavía._
+### Nuevo
+
+- **Perfiles**, comunes a todas las listas y a la Biblioteca: cada persona tiene sus favoritos, su progreso, su «Seguir viendo» y su audio y subtítulos preferidos, sin mezclarse con los demás.
+  - Con más de un perfil, la app empieza con «¿Quién está viendo?».
+  - Arriba a la derecha se ve el perfil en uso; al pulsarlo se cambia de perfil o se gestionan.
+  - Cada perfil puede tener una **foto propia** (JPG o PNG, recortada en círculo) o su inicial sobre un color.
+  - Las categorías bloqueadas se comparten entre los perfiles de una lista, para que el control parental no se salte cambiando de perfil.
+  - Lo que había antes pasa al primer perfil, «Principal», sin perder nada. La copia de seguridad guarda todos los perfiles con sus fotos.
+
+- **Audio y subtítulos preferidos**: el reproductor recuerda el idioma de audio y de subtítulos (o subtítulos desactivados) que eliges y lo aplica solo en los siguientes vídeos. Se ve y se olvida en Ajustes → Reproducción.
+- **Series en «Seguir viendo»**: aparecen junto a las películas con el episodio por el que vas («T2 E5»); al acabar un episodio pasa al siguiente y la serie sale al terminar el último. Lo más reciente va primero.
+- **Cambiar de canal escribiendo el número** en directo (teclado o teclado numérico): salta tras una pausa corta o con Intro, también a canales de otra categoría.
+- **Velocidad de reproducción** de 0,5× a 2× en películas y series; se mantiene en los siguientes vídeos mientras el reproductor sigue abierto.
+- **Temporizador de apagado**: 15 a 120 minutos o «al terminar este episodio»; baja el volumen poco a poco y pausa (en directo, detiene el canal para liberar la conexión).
+- **Aviso de versiones nuevas**: una vez al día se consulta a GitHub la última versión publicada (se puede desactivar). Ajustes → Actualizaciones muestra la versión y abre su página; no descarga ni instala nada.
+- **Copia de seguridad** de favoritos, progreso, «Seguir viendo» y ajustes (Ajustes → Avanzado). Sin contraseñas, tokens, enlaces de listas ni el PIN; al importarla se une con lo que ya hay.
+- **Aviso de Windows** cuando termina una descarga con la app minimizada o detrás de otras ventanas (se puede desactivar).
+
+### Seguridad
+
+- Las descargas y los `.zip` importados solo se guardan con extensiones de vídeo: un proveedor o un `.zip` no pueden dejar un programa (`.exe`, `.lnk`…) en la carpeta de descargas.
+- Importar un `.zip` de biblioteca comprueba que cada archivo no ocupe más de lo que declara (archivos «bomba») y que las carátulas sean imágenes de verdad.
+- Las carátulas de una descarga solo se copian del disco cuando el vídeo viene de una carpeta o NAS; un proveedor en línea no puede hacer que se copie (y luego se exporte) un archivo privado del equipo.
+- Una copia de seguridad ya no puede cambiar la página que abre «Ver novedades», ni crear cuentas de carpeta con rutas de dispositivo, ni traer fotos que no sean PNG; los ajustes fuera de rango se corrigen y los archivos de más de 64 MB se rechazan.
+- El tráiler de una película solo abre páginas web (http/https).
+- Los nombres reservados de Windows (`CON`, `NUL`, `COM1`…) ya no rompen una descarga.
 
 ## [1.1.0] - 2026-11-16
 

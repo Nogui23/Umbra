@@ -5,12 +5,26 @@
     <UserControl.Resources>
         <!-- A downloaded movie, or a series with its downloaded episodes -->
         <DataTemplate x:Key="TileTemplate">
-            <Button Style="{StaticResource CardButton}" Margin="7,8" ToolTip="{Binding Name}" Click="Tile_Click" Tag="{Binding}">
+            <Button Style="{StaticResource CardButton}" Margin="0,8,0,0" ToolTip="{Binding Name}" Click="Tile_Click" Tag="{Binding}">
                 <Button.ContextMenu>
                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                         <MenuItem Header="{local:T 'Eliminar del disco'}" Click="TileDelete_Click"/>
                     </ContextMenu>
                 </Button.ContextMenu>
+                <!-- The whole card (poster, title and size) is marked when chosen for export -->
+                <Border CornerRadius="19" BorderThickness="2" Padding="8,8,8,12">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="BorderBrush" Value="Transparent"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                    <Setter Property="Background" Value="#1FFFFFFF"/>
+                                    <Setter Property="BorderBrush" Value="White"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
                 <StackPanel>
                     <local:AspectBox Ratio="1.5" CornerRadius="13">
                         <Grid>
@@ -20,8 +34,6 @@
                             <local:FadeImage Source="{Binding Image, Converter={StaticResource Img}, ConverterParameter=360}"
                                              Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
                             <!-- Chosen for export -->
-                            <Border BorderBrush="White" BorderThickness="2" CornerRadius="13" Background="#59000000"
-                                    Visibility="{Binding IsSelected, Converter={StaticResource BoolVis}}"/>
                             <Border Background="White" CornerRadius="14" Width="28" Height="28" Margin="9"
                                     HorizontalAlignment="Right" VerticalAlignment="Top"
                                     Visibility="{Binding IsSelected, Converter={StaticResource BoolVis}}">
@@ -31,9 +43,10 @@
                         </Grid>
                     </local:AspectBox>
                     <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" Margin="3,10,3,0" FontSize="13.5"/>
-                    <TextBlock Text="{Binding Caption}" Style="{StaticResource Caption}" FontSize="12" Margin="3,2,3,0"
+                    <TextBlock Text="{Binding Caption}" Style="{StaticResource Caption}" FontSize="12" Margin="3,4,3,0"
                                TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
+                </Border>
             </Button>
         </DataTemplate>
         <Style x:Key="TileCell" TargetType="ContentPresenter">

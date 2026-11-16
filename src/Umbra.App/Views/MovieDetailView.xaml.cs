@@ -256,8 +256,20 @@ public partial class MovieDetailView : UserControl, IRefreshable
     {
         var t = _detail?.Trailer ?? "";
         if (t.Length == 0) return;
-        var url = t.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? t : "https://www.youtube.com/watch?v=" + Uri.EscapeDataString(t);
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        // The provider writes this field: only a web page is ever opened, never a file or another kind of link.
+        string url;
+        if (Uri.TryCreate(t, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;
+            url = uri.AbsoluteUri;
+        }
+        else
+        {
+            if (t.Length > 64 || !t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')) return;
+            url = "https://www.youtube.com/watch?v=" + Uri.EscapeDataString(t);
+        }
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) { Sheet.Warn("No se pudo abrir la página", ex.Message); }
     }
 
     void Back_Click(object sender, RoutedEventArgs e) => MainWindow.Instance.GoBack();

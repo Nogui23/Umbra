@@ -65,7 +65,20 @@
                 </Border>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <!-- Profile in use; a click opens the list to change it -->
+                    <Button x:Name="ProfileButton" Style="{StaticResource IconButton}" Width="Auto" Height="42" Padding="5,0,10,0"
+                            Margin="0" Click="Profile_Click" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <local:ProfileAvatar x:Name="ProfileAvatarTop" Size="32"/>
+                            <TextBlock x:Name="ProfileLabel" FontFamily="{StaticResource UiFont}" FontSize="13.5" MaxWidth="140"
+                                       TextTrimming="CharacterEllipsis" Margin="9,0,2,0" VerticalAlignment="Center"/>
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE70D;" FontSize="9" Margin="6,1,0,0" VerticalAlignment="Center"
+                                       Foreground="{StaticResource MutedBrush}"/>
+                        </StackPanel>
+                    </Button>
                     <StackPanel x:Name="AccountArea" Orientation="Horizontal" Visibility="Collapsed">
+                        <!-- Keeps the person apart from the list -->
+                        <Rectangle x:Name="ProfileDivider" Width="1" Height="20" Fill="{StaticResource HairlineStrong}" Margin="6,0,12,0"/>
                         <RadioButton x:Name="NavAccount" Style="{StaticResource NavIcon}" Height="42" Padding="5,0,6,0"
                                      ToolTip="{local:T 'Cuenta'}" Checked="Nav_Checked">
                             <StackPanel Orientation="Horizontal">
@@ -73,11 +86,11 @@
                                     <TextBlock x:Name="AccountInitial" FontFamily="{StaticResource UiFont}" FontSize="14" FontWeight="SemiBold"
                                                Foreground="{StaticResource TextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Border>
-                                <TextBlock x:Name="AccountLabel" FontFamily="{StaticResource UiFont}" FontSize="13.5" MaxWidth="180"
+                                <TextBlock x:Name="AccountLabel" FontFamily="{StaticResource UiFont}" FontSize="13.5" MaxWidth="150"
                                            TextTrimming="CharacterEllipsis" Margin="10,0,8,0" VerticalAlignment="Center"/>
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton x:Name="NavDownloads" Style="{StaticResource NavIcon}" Width="42" Height="42" Margin="6,0,0,0"
+                        <RadioButton x:Name="NavDownloads" Style="{StaticResource NavIcon}" Width="42" Height="42" Margin="4,0,0,0"
                                      Content="&#xE896;" ToolTip="{local:T 'Descargas'}" Checked="Nav_Checked"/>
                         <RadioButton x:Name="NavSettings" Style="{StaticResource NavIcon}" Width="42" Height="42" Margin="6,0,0,0"
                                      Content="&#xE713;" ToolTip="{local:T 'Ajustes'}" Checked="Nav_Checked"/>

@@ -1,0 +1,55 @@
+<UserControl x:Class="Umbra.App.ProfileEditView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Umbra.App">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="40,0,40,60">
+            <Button Style="{StaticResource GlassIconButton}" Content="&#xE72B;" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Width="46" Height="46" Margin="8,10,0,0" ToolTip="{local:T 'Volver (Esc)'}" Click="Back_Click"/>
+            <Border x:Name="Panel" Style="{StaticResource Card}" Width="560" Padding="38,32" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,70,0,0">
+                <StackPanel>
+                    <TextBlock x:Name="TitleText" Style="{StaticResource LargeTitle}" FontSize="30"/>
+                    <Grid Margin="0,26,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition/>
+                        </Grid.ColumnDefinitions>
+                        <local:ProfileAvatar x:Name="Avatar" Size="132" VerticalAlignment="Top"/>
+                        <StackPanel Grid.Column="1" Margin="26,6,0,0" VerticalAlignment="Center">
+                            <Button Style="{StaticResource SubtleButton}" HorizontalAlignment="Left" Padding="18,10" FontSize="13.5" Click="Photo_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE722;" Margin="0,0,9,0"/>
+                                    <TextBlock x:Name="PhotoText"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="RemovePhotoButton" Content="{local:T 'Quitar foto'}" Style="{StaticResource GhostButton}" HorizontalAlignment="Left"
+                                    Margin="-4,6,0,0" Click="RemovePhoto_Click"/>
+                            <TextBlock Text="{local:T 'JPG o PNG. Se usa el centro de la imagen, recortado en círculo.'}" Style="{StaticResource Caption}"
+                                       FontSize="12" TextWrapping="Wrap" Margin="2,8,0,0"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="{local:T 'Nombre'}" Style="{StaticResource FieldLabel}"/>
+                    <TextBox x:Name="NameBox" MaxLength="30" TextChanged="Name_TextChanged"/>
+
+                    <TextBlock Text="{local:T 'Color (cuando no hay foto)'}" Style="{StaticResource FieldLabel}"/>
+                    <WrapPanel x:Name="Swatches" Margin="0,4,0,0"/>
+
+                    <Border x:Name="ErrorBox" Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineStrong}" BorderThickness="1"
+                            CornerRadius="12" Padding="14,11" Margin="0,18,0,0" Visibility="Collapsed">
+                        <TextBlock x:Name="ErrorText" TextWrapping="Wrap" FontSize="13.5"/>
+                    </Border>
+
+                    <Button Style="{StaticResource AccentButton}" Margin="0,26,0,0" Padding="24,13" IsDefault="True" Click="Save_Click"
+                            Content="{local:T 'Guardar'}"/>
+                    <Button x:Name="DeleteButton" Style="{StaticResource GhostButton}" Margin="0,8,0,-8" Click="Delete_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" FontSize="12" Margin="0,1,8,0"/>
+                            <TextBlock Text="{local:T 'Eliminar perfil'}"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

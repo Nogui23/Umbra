@@ -260,6 +260,8 @@ public partial class SeriesDetailView : UserControl, IRefreshable
             ResumeKey = AppState.EpisodeKey(e.Id),
             StartMs = S.ResumeOf(AppState.EpisodeKey(e.Id)),
             IsEpisode = true,
+            SeriesKey = AppState.Key(MediaKind.Series, _series.Id),
+            EpisodeLabel = L.T("T{0} E{1}", e.Season, e.Number),
         }).ToList();
         PlayerView.Open(items, all.IndexOf(episode));
     }

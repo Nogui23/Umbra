@@ -119,6 +119,19 @@
                             <TextBlock Text="{local:T 'Reproducir el siguiente episodio automáticamente'}" Style="{StaticResource RowLabel}" VerticalAlignment="Center"/>
                             <CheckBox x:Name="AutoNext" Grid.Column="1" Style="{StaticResource Switch}" Click="Changed"/>
                         </Grid>
+                        <Rectangle Style="{StaticResource Divider}"/>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,10,16,10">
+                                <TextBlock Text="{local:T 'Audio y subtítulos preferidos'}" Style="{StaticResource RowLabel}"/>
+                                <TextBlock x:Name="PreferredTracksText" Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                            <Button x:Name="ForgetTracksButton" Grid.Column="1" Content="{local:T 'Olvidar'}" Style="{StaticResource SubtleButton}"
+                                    Padding="16,9" FontSize="13.5" VerticalAlignment="Center" Click="ForgetTracks_Click"/>
+                        </Grid>
                         <Rectangle Style="{StaticResource Divider}" Tag="list"/>
                         <Grid Style="{StaticResource Row}" Tag="list">
                             <Grid.ColumnDefinitions>
@@ -171,6 +184,18 @@
                                 <TextBlock Text="{local:T 'Algunos proveedores bajan la velocidad al poco de empezar. Con esto, la descarga se reconecta y sigue desde el mismo punto para recuperarla. Es saltarse un límite del proveedor: úsalo bajo tu responsabilidad.'}" Style="{StaticResource RowNote}"/>
                             </StackPanel>
                             <CheckBox x:Name="ReconnectDownloads" Grid.Column="1" Style="{StaticResource Switch}" Click="Changed"/>
+                        </Grid>
+                        <Rectangle Style="{StaticResource Divider}"/>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,10,16,10">
+                                <TextBlock Text="{local:T 'Avisar en Windows al terminar una descarga'}" Style="{StaticResource RowLabel}"/>
+                                <TextBlock Text="{local:T 'Solo cuando la app está minimizada o detrás de otras ventanas.'}" Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                            <CheckBox x:Name="NotifyDownloads" Grid.Column="1" Style="{StaticResource Switch}" Click="Changed"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -242,11 +267,62 @@
                                 <ColumnDefinition/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,10,16,10">
+                                <TextBlock Text="{local:T 'Copia de seguridad'}" Style="{StaticResource RowLabel}"/>
+                                <TextBlock Text="{local:T 'Perfiles con sus fotos, favoritos, progreso, «Seguir viendo» y ajustes. Lleva el nombre, el servidor y el usuario de tus cuentas para reconocerlas, pero no contraseñas, tokens ni el PIN.'}" Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="{local:T 'Exportar'}" Style="{StaticResource SubtleButton}" Padding="16,9" FontSize="13.5" Click="ExportBackup_Click"/>
+                                <Button Content="{local:T 'Importar'}" Style="{StaticResource SubtleButton}" Padding="16,9" FontSize="13.5" Margin="8,0,0,0" Click="ImportBackup_Click"/>
+                            </StackPanel>
+                        </Grid>
+                        <Rectangle Style="{StaticResource Divider}"/>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
                             <TextBlock Text="{local:T 'Datos guardados'}" Style="{StaticResource RowLabel}" VerticalAlignment="Center"/>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                 <Button Content="{local:T 'Borrar caché'}" Style="{StaticResource SubtleButton}" Padding="16,9" FontSize="13.5" Click="ClearCache_Click" Tag="list"/>
                                 <Button Content="{local:T 'Abrir carpeta'}" Style="{StaticResource SubtleButton}" Padding="16,9" FontSize="13.5" Margin="8,0,0,0" Click="OpenData_Click"/>
                             </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel>
+                <TextBlock Text="{local:T 'ACTUALIZACIONES'}" Style="{StaticResource GroupTitle}"/>
+                <Border Style="{StaticResource Group}">
+                    <StackPanel>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,10,16,10">
+                                <TextBlock x:Name="UpdateTitle" Style="{StaticResource RowLabel}"/>
+                                <TextBlock x:Name="UpdateNote" Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="UpdatePageButton" Content="{local:T 'Ver novedades'}" Style="{StaticResource AccentButton}" Padding="16,9" FontSize="13.5"
+                                        Margin="0,0,8,0" Click="UpdatePage_Click" Visibility="Collapsed"/>
+                                <Button x:Name="UpdateCheckButton" Content="{local:T 'Comprobar'}" Style="{StaticResource SubtleButton}" Padding="16,9" FontSize="13.5"
+                                        Click="CheckUpdates_Click"/>
+                            </StackPanel>
+                        </Grid>
+                        <Rectangle Style="{StaticResource Divider}"/>
+                        <Grid Style="{StaticResource Row}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,10,16,10">
+                                <TextBlock Text="{local:T 'Buscar versiones nuevas al abrir'}" Style="{StaticResource RowLabel}"/>
+                                <TextBlock Text="{local:T 'Una vez al día se pregunta a GitHub cuál es la última versión publicada. No se descarga ni se instala nada.'}" Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                            <CheckBox x:Name="CheckUpdates" Grid.Column="1" Style="{StaticResource Switch}" Click="Changed"/>
                         </Grid>
                     </StackPanel>
                 </Border>

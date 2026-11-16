@@ -135,13 +135,18 @@ public static class LibraryArchive
             }
         }, ct);
 
-    static async Task<long> CopyAsync(Stream source, Stream target, long done, long total, IProgress<double>? progress, CancellationToken ct)
+    /// <param name="limit">Most bytes to accept: an entry of a .zip that unpacks to more than it declared is refused.</param>
+    static async Task<long> CopyAsync(Stream source, Stream target, long done, long total, IProgress<double>? progress, CancellationToken ct,
+        long limit = long.MaxValue)
     {
         var buffer = new byte[1 << 17];
         var last = Environment.TickCount64;
+        long copied = 0;
         int read;
         while ((read = await source.ReadAsync(buffer, ct)) > 0)
         {
+            copied += read;
+            if (copied > limit) throw new InvalidDataException(L.T("Este archivo no es una biblioteca exportada desde Umbra."));
             await target.WriteAsync(buffer.AsMemory(0, read), ct);
             done += read;
             if (Environment.TickCount64 - last < 200) continue;
@@ -162,21 +167,48 @@ public static class LibraryArchive
         {
             var manager = DownloadManager.I;
             using var zip = ZipFile.OpenRead(zipPath);
-            var listEntry = zip.GetEntry(ManifestName)
-                ?? throw new InvalidDataException(L.T("Este archivo no es una biblioteca exportada desde Umbra."));
+            var listEntry = zip.GetEntry(ManifestName);
+            // The list is a few kilobytes per item; a huge one is not a list made by Umbra.
+            if (listEntry is null || listEntry.Length > 16 << 20)
+                throw new InvalidDataException(L.T("Este archivo no es una biblioteca exportada desde Umbra."));
             Manifest manifest;
-            await using (var stream = listEntry.Open())
-                manifest = await JsonSerializer.DeserializeAsync<Manifest>(stream, Json, ct) ?? new Manifest();
+            try
+            {
+                await using var stream = listEntry.Open();
+                using var limited = new MemoryStream();
+                await CopyAsync(stream, limited, 0, 1, null, ct, limit: 16 << 20);
+                limited.Position = 0;
+                manifest = await JsonSerializer.DeserializeAsync<Manifest>(limited, Json, ct) ?? new Manifest();
+            }
+            catch (JsonException)
+            {
+                throw new InvalidDataException(L.T("Este archivo no es una biblioteca exportada desde Umbra."));
+            }
+            manifest.Items ??= new();
+            manifest.Items.RemoveAll(e => e is null);
+            foreach (var e in manifest.Items)
+            {
+                e.Title ??= "";
+                e.Subtitle ??= "";
+                e.Series ??= "";
+                e.FileName ??= "";
+                e.Video ??= "";
+                e.Image ??= "";
+            }
             if (manifest.Format != FormatName || manifest.Items.Count == 0)
                 throw new InvalidDataException(L.T("Este archivo no es una biblioteca exportada desde Umbra."));
             if (manifest.Version > 1)
                 throw new InvalidDataException(L.T("Este archivo se exportó con una versión más nueva de Umbra."));
 
             // Only entries the list names, and only from the two folders the export writes.
-            ZipArchiveEntry? Find(string name, string folder) =>
-                name.StartsWith(folder + "/", StringComparison.Ordinal) && !name.Contains("..") ? zip.GetEntry(name) : null;
+            ZipArchiveEntry? Find(string? name, string folder) =>
+                name is not null && name.StartsWith(folder + "/", StringComparison.Ordinal) && !name.Contains("..") && !name.Contains('\\')
+                    ? zip.GetEntry(name) : null;
 
-            var wanted = manifest.Items.Select(e => (Entry: e, Video: Find(e.Video, "videos"))).Where(x => x.Video is not null).ToList();
+            // Only videos: a file with any other extension (a program, a shortcut) is never written to the disk.
+            var wanted = manifest.Items
+                .Select(e => (Entry: e, Video: DownloadManager.IsVideoExtension(Path.GetExtension(e.Video)) ? Find(e.Video, "videos") : null))
+                .Where(x => x.Video is not null).ToList();
             var total = Math.Max(1, wanted.Sum(x => x.Video!.Length));
             long done = 0;
             int added = 0, skipped = 0;
@@ -210,7 +242,7 @@ public static class LibraryArchive
                 {
                     await using (var source = video.Open())
                     await using (var target = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
-                        done = await CopyAsync(source, target, done, total, progress, ct);
+                        done = await CopyAsync(source, target, done, total, progress, ct, limit: size);
                     File.Move(part, path, overwrite: false);
 
                     async Task<string> Art(string inZip)
@@ -220,9 +252,15 @@ public static class LibraryArchive
                         if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp" or ".bmp" or ".gif")) ext = ".jpg";
                         Directory.CreateDirectory(DownloadManager.ArtDir);
                         var file = Path.Combine(DownloadManager.ArtDir, $"{id}-{Text.ShortHash(inZip)}{ext}");
-                        await using var source = picture.Open();
-                        await using var target = File.Create(file);
-                        await source.CopyToAsync(target, ct);
+                        byte[] bytes;
+                        await using (var source = picture.Open())
+                        using (var buffer = new MemoryStream())
+                        {
+                            await CopyAsync(source, buffer, 0, 1, null, ct, limit: 12 << 20);
+                            bytes = buffer.ToArray();
+                        }
+                        if (!DownloadManager.LooksLikeImage(bytes)) return "";
+                        await File.WriteAllBytesAsync(file, bytes, ct);
                         art.Add(file);
                         return file;
                     }

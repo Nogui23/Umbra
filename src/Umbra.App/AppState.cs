@@ -9,6 +9,7 @@ public sealed class AppState
 
     readonly HashSet<string> _unlocked = new();
     string? _dataId; // account whose favourites and progress are in Data
+    string? _dataProfile; // and the profile they belong to
 
     public Settings Settings { get; private set; } = new();
     public AccountStore Accounts { get; } = new();
@@ -16,14 +17,61 @@ public sealed class AppState
     public IContentSource? Source { get; private set; }
     public ContentLibrary? Library { get; private set; }
     public UserData Data { get; private set; } = new();
+    public ProfileStore Profiles { get; } = new();
+    /// <summary>The person using the app: favourites, progress and preferred tracks are theirs.</summary>
+    public Profile Profile { get; private set; } = new();
+
+    /// <summary>The profile changed: every screen shows someone else's data.</summary>
+    public event Action? ProfileChanged;
 
     public event Action? LibraryChanged;
 
     public void Load(bool loadAccounts = true)
     {
-        Settings = JsonStore.Load<Settings>("settings.json");
+        Settings = JsonStore.Load<Settings>("settings.json").Normalize();
         if (loadAccounts) Accounts.Load();
+        Profiles.Load(Settings, Settings.Language == L.EnglishCode ? "Main" : "Principal");
+        Profile = Profiles.Items.FirstOrDefault(p => p.Id == Settings.LastProfileId) ?? Profiles.Items[0];
         ApplySettings();
+    }
+
+    // ----- Profiles -----
+
+    /// <summary>Changes the person using the app; the open list shows that profile's favourites and progress.</summary>
+    public void SwitchProfile(Profile profile)
+    {
+        SaveData();
+        Profile = profile;
+        Settings.LastProfileId = profile.Id;
+        SaveSettings();
+        _unlocked.Clear();
+        if (_dataId is { } id)
+        {
+            Data = LoadData(id);
+            _dataProfile = profile.Id;
+            ApplyUserData();
+        }
+        ProfileChanged?.Invoke();
+    }
+
+    /// <summary>After a profile was edited or deleted: the one in use may have changed or gone.</summary>
+    public void ProfilesEdited()
+    {
+        var current = Profiles.Items.FirstOrDefault(p => p.Id == Profile.Id);
+        if (current is null) SwitchProfile(Profiles.Items[0]);
+        else ProfileChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// What the profile in use did in a list. Locked categories are shared by every profile of the list, so a
+    /// profile cannot get round them.
+    /// </summary>
+    UserData LoadData(string accountId)
+    {
+        var data = JsonStore.Load<UserData>(ProfileStore.DataFile(accountId, Profile.Id));
+        if (File.Exists(Path.Combine(AppPaths.DataDir, Backup.LocksFile(accountId))))
+            data.LockedCategories = JsonStore.Load<HashSet<string>>(Backup.LocksFile(accountId));
+        return data;
     }
 
     void ApplySettings()
@@ -47,12 +95,13 @@ public sealed class AppState
         Account = account;
         Source = source;
         Library = library;
-        if (!sameAccount)
+        if (!sameAccount || _dataProfile != Profile.Id)
         {
-            Data = JsonStore.Load<UserData>(DataFile(account));
+            Data = LoadData(account.Id);
             _unlocked.Clear();
         }
         _dataId = account.Id;
+        _dataProfile = Profile.Id;
         ApplyUserData();
         if (persist)
         {
@@ -72,7 +121,7 @@ public sealed class AppState
         Source = null;
         Library = null;
         Data = new UserData();
-        _dataId = null;
+        _dataId = _dataProfile = null;
         _unlocked.Clear();
         if (forgetLastAccount)
         {
@@ -81,24 +130,26 @@ public sealed class AppState
         }
     }
 
-    static string DataFile(Account account) => DataFile(account.Id);
-    static string DataFile(string accountId) => $"userdata_{accountId}.json";
-
     /// <summary>
     /// With no account open (the library reached from the sign-in screen), loads the progress of the account a
     /// download belongs to, so it resumes where it was left and what is watched now is remembered.
     /// </summary>
     public void UseDataOf(string accountId)
     {
-        if (Account is not null || accountId.Length == 0 || _dataId == accountId) return;
-        Data = JsonStore.Load<UserData>(DataFile(accountId));
+        if (Account is not null || accountId.Length == 0 || (_dataId == accountId && _dataProfile == Profile.Id)) return;
+        Data = LoadData(accountId);
         _dataId = accountId;
+        _dataProfile = Profile.Id;
     }
 
     public void SaveData()
     {
-        if (_dataId is null) return;
-        try { JsonStore.Save(DataFile(_dataId), Data); }
+        if (_dataId is null || _dataProfile is null) return;
+        try
+        {
+            JsonStore.Save(ProfileStore.DataFile(_dataId, _dataProfile), Data);
+            if (_dataId != LibraryArchive.LocalAccount) JsonStore.Save(Backup.LocksFile(_dataId), Data.LockedCategories);
+        }
         catch (Exception ex) { Log.Error("No se pudieron guardar los datos de usuario", ex); }
     }
 
@@ -151,12 +202,14 @@ public sealed class AppState
     public void SaveResume(string key, long ms)
     {
         Data.Resume[key] = ms;
+        Data.ResumeUtc[key] = DateTime.UtcNow;
         SaveData();
     }
 
     public void MarkWatched(string key)
     {
         Data.Resume.Remove(key);
+        Data.ResumeUtc.Remove(key);
         Data.Watched.Add(key);
         SaveData();
     }
@@ -164,18 +217,39 @@ public sealed class AppState
     public void ClearProgress(string key)
     {
         Data.Resume.Remove(key);
+        Data.ResumeUtc.Remove(key);
         Data.Watched.Remove(key);
         SaveData();
     }
 
-    /// <summary>Number of movies with a saved resume point (the «Seguir viendo» shelf).</summary>
-    public int MovieResumeCount => Data.Resume.Keys.Count(k => k.StartsWith("movie:", StringComparison.Ordinal));
+    /// <summary>When the resume point of a movie was saved; old ones (before this was kept) count as oldest.</summary>
+    public DateTime ResumeTimeOf(string key) => Data.ResumeUtc.GetValueOrDefault(key);
 
-    /// <summary>Forgets the resume point of every movie, emptying the «Seguir viendo» shelf.</summary>
-    public void ClearMovieResumes()
+    /// <summary>The episode a series continues with in «Seguir viendo».</summary>
+    public void SetSeriesProgress(string seriesKey, string episodeKey, string label)
+    {
+        Data.Series[seriesKey] = new SeriesProgress { Episode = episodeKey, Label = label, Utc = DateTime.UtcNow };
+        SaveData();
+    }
+
+    /// <summary>Takes a series off «Seguir viendo» (finished, or removed by hand). Its episodes keep their progress.</summary>
+    public void ForgetSeries(string seriesKey)
+    {
+        if (Data.Series.Remove(seriesKey)) SaveData();
+    }
+
+    /// <summary>Movies with a resume point plus series being watched: what the «Seguir viendo» shelf holds.</summary>
+    public int ContinueCount => Data.Resume.Keys.Count(k => k.StartsWith("movie:", StringComparison.Ordinal)) + Data.Series.Count;
+
+    /// <summary>Empties «Seguir viendo»: forgets where every movie was left and every series in progress.</summary>
+    public void ClearContinueWatching()
     {
         foreach (var key in Data.Resume.Keys.Where(k => k.StartsWith("movie:", StringComparison.Ordinal)).ToList())
+        {
             Data.Resume.Remove(key);
+            Data.ResumeUtc.Remove(key);
+        }
+        Data.Series.Clear();
         SaveData();
     }
 
@@ -187,6 +261,38 @@ public sealed class AppState
         if (Data.RecentChannels.Count > 40) Data.RecentChannels.RemoveRange(40, Data.RecentChannels.Count - 40);
         SaveData();
     }
+
+    // ----- Backup -----
+
+    /// <summary>Writes favourites, progress and settings of every account to a file (no passwords).</summary>
+    public void ExportBackup(string path)
+    {
+        SaveData();
+        // The open account goes in even if it is not among the saved ones.
+        var accounts = Accounts.Items.ToList();
+        if (Account is { } open && accounts.All(a => a.Id != open.Id)) accounts.Add(open);
+        Backup.Export(path, Settings, accounts, Profiles, OpenData);
+    }
+
+    /// <summary>Adds a copy to the saved data and takes its settings (keeping the PIN and the download folder).</summary>
+    public Backup.Result RestoreBackup(string path)
+    {
+        var file = Backup.Read(path);
+        var result = Backup.Restore(file, Accounts, Profiles, Settings, Account, OpenData, data =>
+        {
+            Backup.Merge(Data, data);
+            SaveData();
+            ApplyUserData();
+        });
+        if (result.Settings is { } settings)
+        {
+            Settings = settings;
+            SaveSettings();
+        }
+        return result;
+    }
+
+    Backup.Open? OpenData => _dataId is { } id && _dataProfile is { } profile ? new Backup.Open(id, profile, Data) : null;
 
     // ----- Downloads -----
 

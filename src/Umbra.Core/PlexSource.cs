@@ -135,7 +135,8 @@ public sealed class PlexSource : IContentSource
             foreach (var c in connections)
             {
                 var uri = c.Str("uri").TrimEnd('/');
-                if (uri.Length == 0) continue;
+                // Only web addresses: the token is sent to them.
+                if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed) || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps)) continue;
                 // Home network first, then from outside, relays last (slow).
                 candidates.Add((uri, token, c.Bool("relay") ? 3 : c.Bool("local") ? 1 : 2));
             }

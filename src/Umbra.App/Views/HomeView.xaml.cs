@@ -5,6 +5,18 @@ using Umbra.Core;
 
 namespace Umbra.App;
 
+/// <summary>A poster of «Seguir viendo»: a movie, or a series with the episode it continues with.</summary>
+public sealed class ResumeTile
+{
+    public required PosterItem Item { get; init; }
+    /// <summary>"movie:ID" or "series:ID".</summary>
+    public required string Key { get; init; }
+    public required string Note { get; init; }
+    public DateTime Utc { get; init; }
+    public string Name => Item.Name;
+    public string Image => Item.Image;
+}
+
 /// <summary>Landing screen: greeting, the three sections and shelves with what the user is most likely to want next.</summary>
 public partial class HomeView : UserControl, IRefreshable
 {
@@ -44,7 +56,30 @@ public partial class HomeView : UserControl, IRefreshable
         var movies = lib.Movies.Where(m => Visible(MediaKind.Movie, m.CategoryId)).ToList();
         var series = lib.Series.Where(s => Visible(MediaKind.Series, s.CategoryId)).ToList();
 
-        var resume = movies.Where(m => S.ResumeOf(AppState.Key(MediaKind.Movie, m.Id)) > 0).Take(ShelfItems).ToList<object>();
+        // Movies left halfway and series in progress, the most recent first.
+        var resume = movies
+            .Select(m => (Movie: m, Key: AppState.Key(MediaKind.Movie, m.Id)))
+            .Where(x => S.ResumeOf(x.Key) > 0)
+            .Select(x => new ResumeTile
+            {
+                Item = x.Movie,
+                Key = x.Key,
+                Note = L.T("Desde {0}", MovieDetailView.FormatTime(S.ResumeOf(x.Key))),
+                Utc = S.ResumeTimeOf(x.Key),
+            })
+            .Concat(series
+                .Select(s => (Series: s, Key: AppState.Key(MediaKind.Series, s.Id)))
+                .Where(x => S.Data.Series.ContainsKey(x.Key))
+                .Select(x => new ResumeTile
+                {
+                    Item = x.Series,
+                    Key = x.Key,
+                    Note = S.Data.Series[x.Key].Label,
+                    Utc = S.Data.Series[x.Key].Utc,
+                }))
+            .OrderByDescending(t => t.Utc)
+            .Take(ShelfItems)
+            .ToList<object>();
         var recent = S.Data.RecentChannels.Select(lib.ChannelById).OfType<Channel>()
             .Where(c => Visible(MediaKind.Live, c.CategoryId)).Take(ShelfItems).ToList<object>();
         var favChannels = channels.Where(c => c.IsFavorite).Take(ShelfItems).ToList<object>();
@@ -56,7 +91,12 @@ public partial class HomeView : UserControl, IRefreshable
 
         // Rebuilding the shelves reloads their pictures, so only do it when their content changed.
         var signature = string.Join("|", new[] { resume, recent, favChannels, favPosters, newMovies, newSeries, firstChannels }
-            .Select(list => string.Join(",", list.Select(o => o is Channel c ? c.Id : ((PosterItem)o).Id))));
+            .Select(list => string.Join(",", list.Select(o => o switch
+            {
+                Channel c => c.Id,
+                ResumeTile t => t.Key + "=" + t.Note,
+                _ => ((PosterItem)o).Id,
+            }))));
         if (signature == _signature) return;
         _signature = signature;
 
@@ -114,29 +154,33 @@ public partial class HomeView : UserControl, IRefreshable
     static string Plural(int count, string one, string many) => count == 1 ? L.T(one) : L.T(many, count);
 
     /// <summary>
-    /// «Seguir viendo»: besides opening a movie, it can be tidied up — right-click a poster to take it off the shelf,
-    /// or «Limpiar» to empty it.
+    /// «Seguir viendo»: movies and series. Besides opening one, it can be tidied up — right-click a poster to take
+    /// it off the shelf, or «Limpiar» to empty it.
     /// </summary>
     void AddResumeShelf(List<object> items)
     {
         if (items.Count == 0) return;
-        var (header, row) = AddPosterShelf("Seguir viendo", items, nameof(MainWindow.NavMovies));
+        var (header, row) = AddShelf("Seguir viendo", items, "ResumeTemplate", PosterCell, PosterShelfHeight, null, (_, e) =>
+        {
+            if (e.OriginalSource is not FrameworkElement { DataContext: ResumeTile tile }) return;
+            MainWindow.Instance.Push(tile.Item is Movie m ? new MovieDetailView(m) : new SeriesDetailView((SeriesItem)tile.Item));
+        });
 
         var clear = new Button
         {
             Content = L.T("Limpiar"),
             Style = (Style)FindResource("GhostButton"),
             HorizontalAlignment = HorizontalAlignment.Right,
-            ToolTip = L.T("Quitar todas las películas de «Seguir viendo»"),
+            ToolTip = L.T("Quitar todo de «Seguir viendo»"),
         };
         clear.Click += (_, _) =>
         {
-            var count = S.MovieResumeCount;
+            var count = S.ContinueCount;
             var message = count == 1
-                ? L.T("Se olvidará por dónde ibas en 1 película. No se borra ninguna descarga ni favorita.")
-                : L.T("Se olvidará por dónde ibas en {0} películas. No se borra ninguna descarga ni favorita.", count);
+                ? L.T("Se olvidará por dónde ibas en 1 película o serie. No se borra ninguna descarga ni favorita.")
+                : L.T("Se olvidará por dónde ibas en {0} películas y series. No se borra ninguna descarga ni favorita.", count);
             if (!Sheet.Confirm("¿Vaciar «Seguir viendo»?", message, "Vaciar")) return;
-            S.ClearMovieResumes();
+            S.ClearContinueWatching();
             Refresh();
             MainWindow.Instance.Toast("«Seguir viendo» está vacío", "");
         };
@@ -157,13 +201,15 @@ public partial class HomeView : UserControl, IRefreshable
         row.ContextMenuOpening += (_, e) =>
         {
             // The menu belongs to a poster: nothing opens on the gaps between them.
-            if (e.OriginalSource is FrameworkElement { DataContext: Movie movie }) remove.Tag = movie;
+            if (e.OriginalSource is FrameworkElement { DataContext: ResumeTile tile }) remove.Tag = tile;
             else e.Handled = true;
         };
         remove.Click += (_, _) =>
         {
-            if (remove.Tag is not Movie movie) return;
-            S.ClearProgress(AppState.Key(MediaKind.Movie, movie.Id));
+            if (remove.Tag is not ResumeTile tile) return;
+            // A series leaves the shelf; its episodes keep their progress.
+            if (tile.Item is Movie) S.ClearProgress(tile.Key);
+            else S.ForgetSeries(tile.Key);
             Refresh();
             MainWindow.Instance.Toast("Quitada de «Seguir viendo»", "");
         };

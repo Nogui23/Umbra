@@ -376,8 +376,11 @@ public sealed class DownloadManager
     /// <summary>Copies the pictures of the item to disk and points it at the copies, so they show without connection.</summary>
     void CacheArt(DownloadItem item)
     {
-        // Pictures on the web, and also those of a folder or NAS, which may not be reachable later.
-        bool Outside(string? u) => IsWeb(u) || (IsLocalPath(u) && !u!.StartsWith(ArtDir, StringComparison.OrdinalIgnoreCase));
+        // Pictures on the web, and also those of a folder or NAS, which may not be reachable later. A file of this
+        // computer is only read for a video that is itself a file (a folder account): an online provider must not be
+        // able to point the app at a private file and have it copied (and later exported with the library).
+        var fromFolder = IsLocalPath(item.Url);
+        bool Outside(string? u) => IsWeb(u) || (fromFolder && IsLocalPath(u) && !u!.StartsWith(ArtDir, StringComparison.OrdinalIgnoreCase));
         var urls = new[] { item.Image, item.Info?.Poster, item.Info?.Backdrop }.Where(Outside).Select(u => u!).Distinct().ToList();
         if (urls.Count == 0) return;
         _ = Task.Run(async () =>
@@ -402,9 +405,15 @@ public sealed class DownloadManager
                         using var response = await SendAsync(url, 0, cts.Token);
                         if (!response.IsSuccessStatusCode) continue;
                         if (response.Content.Headers.ContentLength > 12 << 20) continue;
-                        bytes = await response.Content.ReadAsByteArrayAsync(cts.Token);
+                        // Read up to the limit only, whatever length the server announces (or not).
+                        await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+                        using var memory = new MemoryStream();
+                        var chunk = new byte[1 << 16];
+                        int n;
+                        while ((n = await stream.ReadAsync(chunk, cts.Token)) > 0 && memory.Length <= 12 << 20) memory.Write(chunk, 0, n);
+                        bytes = memory.ToArray();
                     }
-                    if (bytes.Length is 0 or > 12 << 20) continue;
+                    if (bytes.Length is 0 or > 12 << 20 || !LooksLikeImage(bytes)) continue;
                     Directory.CreateDirectory(ArtDir);
                     await File.WriteAllBytesAsync(path, bytes, cts.Token);
                     Post(() =>
@@ -864,9 +873,27 @@ public sealed class DownloadManager
         File.Exists(path) || File.Exists(path + ".part") ||
         _items.Any(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
 
+    static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mp4", "m4v", "mkv", "avi", "mov", "ts", "m2ts", "mts", "webm", "wmv", "flv", "mpg", "mpeg", "3gp", "ogv", "vob", "divx", "rmvb", "asf",
+    };
+
+    /// <summary>True for the containers of video the app saves; «.exe», «.lnk» and the like never are.</summary>
+    internal static bool IsVideoExtension(string? extension) => VideoExtensions.Contains((extension ?? "").Trim().TrimStart('.'));
+
+    /// <summary>JPEG, PNG, GIF, BMP or WebP by its first bytes, whatever the name or the server say.</summary>
+    internal static bool LooksLikeImage(ReadOnlySpan<byte> b) =>
+        b.Length > 12 && (
+            b[..3].SequenceEqual(new byte[] { 0xFF, 0xD8, 0xFF })
+            || b[..8].SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A })
+            || b[..4].SequenceEqual("GIF8"u8)
+            || b[..2].SequenceEqual("BM"u8)
+            || (b[..4].SequenceEqual("RIFF"u8) && b[8..12].SequenceEqual("WEBP"u8)));
+
     static string ExtensionFor(DownloadRequest request)
     {
-        static bool Valid(string e) => e.Length is > 0 and <= 5 && e.All(char.IsAsciiLetterOrDigit);
+        // Only video containers: a provider cannot make the app save a program in the download folder.
+        static bool Valid(string e) => IsVideoExtension(e);
         var fromUrl = Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) ? Path.GetExtension(uri.AbsolutePath).TrimStart('.') : "";
         if (Valid(fromUrl)) return fromUrl.ToLowerInvariant();
         var given = (request.Extension ?? "").Trim().TrimStart('.');
@@ -880,6 +907,11 @@ public sealed class DownloadManager
         var chars = (text ?? "").Select(c => invalid.Contains(c) || char.IsControl(c) ? ' ' : c).ToArray();
         var name = string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries)).Trim('.', ' ');
         if (name.Length > 120) name = name[..120].Trim('.', ' ');
-        return name.Length == 0 ? "video" : name;
+        if (name.Length == 0) return "video";
+        // Names Windows keeps for devices («CON», «NUL», «COM1»…), also with an extension after them.
+        var stem = name.Split('.')[0].Trim().ToUpperInvariant();
+        if (stem is "CON" or "PRN" or "AUX" or "NUL" || (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT")) && char.IsDigit(stem[3])))
+            name = "_" + name;
+        return name;
     }
 }

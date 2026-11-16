@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -86,6 +87,11 @@ static class SelfTest
                 await RunAsync(window, account, args[4]);
             }
         }
+        if (args.Length >= 3 && args[0] == "--selftest-tracks")
+        {
+            _ = TracksAsync(window, args[1], args[2]);
+            return true;
+        }
         if (args.Length >= 3 && args[0] == "--selftest-folder")
         {
             var account = new Account { Type = AccountType.Folder, Server = args[1], Name = "Prueba carpeta" };
@@ -93,6 +99,59 @@ static class SelfTest
             return true;
         }
         return false;
+    }
+
+    /// <summary>Plays a video with several audio and subtitle languages and checks which ones the player picks.</summary>
+    static async Task TracksAsync(MainWindow window, string video, string outDir)
+    {
+        Directory.CreateDirectory(outDir);
+        var lines = new List<string>();
+        var st = AppState.I.Profile;
+        async Task Case(string audio, string subs)
+        {
+            st.PreferredAudio = audio;
+            st.PreferredSubtitles = subs;
+            PlayerView.Open(new[] { new PlayItem { Title = "Pistas", Url = video } }, 0);
+            var player = PlayerView.Active!;
+            await WaitForPlayback(player);
+            await Task.Delay(3000);
+            lines.Add($"preferido audio='{audio}' subs='{subs}' -> audio={player.AudioKey} subs={player.SubtitleKey} · {Outcome(player)}");
+            lines.Add("  pistas: " + player.TrackNames);
+            PlayerView.Shutdown();
+            await Task.Delay(800);
+        }
+        try
+        {
+            window.ShowLogin();
+            await Case("", "");
+            await Case("en", "en");
+            await Case("es", TrackLanguage.Off);
+            await Case("en", "es");
+
+            // Speed and sleep timer.
+            PlayerView.Open(new[] { new PlayItem { Title = "Velocidad", Url = video } }, 0);
+            var player = PlayerView.Active!;
+            await WaitForPlayback(player);
+            await Task.Delay(1000);
+            player.SetSpeed(1.5f);
+            await Task.Delay(1200);
+            lines.Add($"velocidad 1,5x -> {player.Rate:0.00}");
+            CapturePlayer(window, player, Path.Combine(outDir, "speed.png"));
+            player.SetSleep(TimeSpan.FromSeconds(3), atEnd: false);
+            await Task.Delay(1500);
+            lines.Add($"temporizador puesto, sigue reproduciendo: {player.IsPlayingNow}");
+            await Task.Delay(3500);
+            lines.Add($"temporizador cumplido, reproduciendo: {player.IsPlayingNow}");
+            CapturePlayer(window, player, Path.Combine(outDir, "sleep.png"));
+            PlayerView.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            lines.Add("FALLO: " + ex);
+        }
+        st.PreferredAudio = st.PreferredSubtitles = "";
+        File.WriteAllLines(Path.Combine(outDir, "tracks.txt"), lines);
+        Application.Current.Shutdown();
     }
 
     static async Task RunAsync(MainWindow window, Account account, string outDir)
@@ -133,23 +192,59 @@ static class SelfTest
             if (lib.Channels.Count > 4) state.ToggleFavorite(lib.Channels[4]);
             if (lib.Movies.Count > 2) state.ToggleFavorite(lib.Movies[2]);
             foreach (var movie in lib.Movies.Take(2)) state.SaveResume(AppState.Key(MediaKind.Movie, movie.Id), 600_000);
+            if (lib.Series.Count > 0) state.SetSeriesProgress(AppState.Key(MediaKind.Series, lib.Series[0].Id), "episode:x", L.T("T{0} E{1}", 2, 5));
             window.EnterShell(account);
             await Task.Delay(3200);
             Shot("02-home");
-            if (state.MovieResumeCount > 0)
+            if (state.ContinueCount > 0 && lib.Movies.Count > 0)
             {
                 state.ClearProgress(AppState.Key(MediaKind.Movie, lib.Movies[0].Id));
                 window.RefreshCurrent();
                 await Task.Delay(900);
                 Shot("02b-home-one-removed");
-                var left = state.MovieResumeCount;
-                state.ClearMovieResumes();
+                var left = state.ContinueCount;
+                state.ClearContinueWatching();
                 window.RefreshCurrent();
                 await Task.Delay(900);
                 Shot("02c-home-cleared");
-                Line($"seguir viendo: quedaba {left} tras quitar una, {state.MovieResumeCount} tras limpiar");
+                Line($"seguir viendo: quedaban {left} (películas y series) tras quitar una, {state.ContinueCount} tras limpiar");
             }
             Line("pantalla NavHome: OK");
+
+            // Profiles: each one has its own favourites; a photo is chosen in the editor.
+            if (Environment.GetEnvironmentVariable("UMBRA_HOME") is { Length: > 0 } && lib.Movies.Count > 0)
+            {
+                var first = state.Profile;
+                var movie = lib.Movies[0];
+                if (!movie.IsFavorite) state.ToggleFavorite(movie);
+                var ana = state.Profiles.Add("Ana");
+                var picture = Path.Combine(outDir, "foto-perfil.png");
+                File.WriteAllBytes(picture, TestPicture());
+                var editor = new ProfileEditView(ana);
+                window.Push(editor);
+                await Task.Delay(1000);
+                editor.UsePhoto(picture);
+                await Task.Delay(600);
+                Shot("02d-edit-profile");
+                editor.Save_Click(editor, new RoutedEventArgs());
+                Line($"perfil Ana: foto guardada={ana.HasPhoto && File.Exists(ProfileStore.PhotoPath(ana))}");
+                window.SwitchProfile(ana);
+                await Task.Delay(2000);
+                Line($"perfil Ana: ve la favorita del otro perfil={movie.IsFavorite} (debe ser False)");
+                Shot("02e-home-profile-ana");
+                window.SwitchProfile(first);
+                await Task.Delay(1500);
+                Line($"vuelta al primer perfil: favorita={movie.IsFavorite} (debe ser True)");
+                window.ShowProfiles(_ => { });
+                await Task.Delay(1600);
+                Shot("02f-who-is-watching");
+                window.Push(new ProfilesView(manage: true, null));
+                await Task.Delay(1200);
+                Shot("02g-manage-profiles");
+                window.EnterShell(account);
+                await Task.Delay(1500);
+                if (movie.IsFavorite) state.ToggleFavorite(movie);
+            }
 
             foreach (var (nav, file) in new[] { ("NavLive", "03-live"), ("NavMovies", "04-movies"), ("NavSeries", "05-series"), ("NavAccount", "07-account"), ("NavDownloads", "07b-downloads"), ("NavSettings", "08-settings") })
             {
@@ -176,6 +271,27 @@ static class SelfTest
             await Task.Delay(2400);
             Shot("06-search");
             Line("pantalla NavSearch: OK");
+
+            // Backup: a favourite taken away comes back when the copy is imported.
+            if (lib.Movies.Count > 0)
+            {
+                var movie = lib.Movies[0];
+                if (!movie.IsFavorite) state.ToggleFavorite(movie);
+                var copy = Path.Combine(outDir, "copia.json");
+                state.ExportBackup(copy);
+                state.ToggleFavorite(movie);
+                window.SelectNav("NavSettings");
+                await Task.Delay(1500);
+                if (window.FindName("Host") is System.Windows.Controls.ContentControl { Content: SettingsView settingsView })
+                {
+                    settingsView.RestoreBackup(copy);
+                    await Task.Delay(1500);
+                    var text = File.ReadAllText(copy);
+                    Line($"copia de seguridad: favorita recuperada={movie.IsFavorite} · sin contraseñas ni enlaces={!text.Contains(account.Password.Length > 0 ? account.Password : " ") && !text.Contains("lista2.m3u") && !text.Contains("Enc\"")}");
+                    Shot("08c-settings-after-restore");
+                }
+                if (movie.IsFavorite) state.ToggleFavorite(movie);
+            }
 
             if (lib.Channels.Count > 0)
             {
@@ -210,6 +326,36 @@ static class SelfTest
                 window.Push(new SeriesDetailView(lib.Series[0]));
                 await Task.Delay(2800);
                 Shot("10-series-detail");
+
+                // Watching an episode to the end leaves the series in «Seguir viendo» at the next one.
+                var episodes = d.Seasons.SelectMany(x => x.Episodes).Take(2).ToList();
+                if (episodes.Count == 2)
+                {
+                    var seriesKey = AppState.Key(MediaKind.Series, lib.Series[0].Id);
+                    PlayerView.Open(episodes.Select(e => new PlayItem
+                    {
+                        Title = e.Title,
+                        Url = source.GetEpisodeUrl(e),
+                        ResumeKey = AppState.EpisodeKey(e.Id),
+                        IsEpisode = true,
+                        SeriesKey = seriesKey,
+                        EpisodeLabel = L.T("T{0} E{1}", e.Season, e.Number),
+                    }).ToList(), 0);
+                    var episodePlayer = PlayerView.Active!;
+                    await WaitForPlayback(episodePlayer);
+                    await Task.Delay(1500);
+                    episodePlayer.HandleKey(Key(System.Windows.Input.Key.Right));
+                    await Task.Delay(600);
+                    episodePlayer.HandleKey(Key(System.Windows.Input.Key.Right));
+                    await Task.Delay(1200);
+                    episodePlayer.Close();
+                    await Task.Delay(1200);
+                    Line($"seguir viendo la serie tras acabar el episodio 1: {(state.Data.Series.TryGetValue(seriesKey, out var sp) ? sp.Label : "NO ESTÁ")}");
+                    window.SelectNav("NavHome");
+                    await Task.Delay(2500);
+                    Shot("10b-home-series-continue");
+                    window.SelectNav("NavSeries");
+                }
                 window.GoBack();
             }
 
@@ -225,6 +371,22 @@ static class SelfTest
                 player.HandleKey(Key(System.Windows.Input.Key.C));
                 await Task.Delay(900);
                 CapturePlayer(window, player, Path.Combine(outDir, "12-player-channels.png"));
+                player.HandleKey(Key(System.Windows.Input.Key.Escape)); // closes the channel list
+                // Typing a channel number: one of another category, then one that does not exist.
+                if ((lib.Channels.Skip(1).FirstOrDefault(c => c.CategoryId != lib.Channels[0].CategoryId) ?? lib.Channels.Skip(1).FirstOrDefault()) is { } target)
+                {
+                    foreach (var ch in target.Num.ToString(CultureInfo.InvariantCulture))
+                        PlayerView.Active!.HandleKey(Key(System.Windows.Input.Key.D0 + (ch - '0')));
+                    await Task.Delay(400);
+                    CapturePlayer(window, PlayerView.Active!, Path.Combine(outDir, "12b-player-number.png"));
+                    await Task.Delay(1800);
+                    Line($"número de canal {target.Num}: ahora suena «{PlayerView.Active?.Playing?.Title}» (esperado «{target.Name}»)");
+                    foreach (var ch in "9999") PlayerView.Active!.HandleKey(Key(System.Windows.Input.Key.D0 + (ch - '0')));
+                    PlayerView.Active!.HandleKey(Key(System.Windows.Input.Key.Enter));
+                    await Task.Delay(500);
+                    Line($"número de canal 9999 (no existe): sigue «{PlayerView.Active?.Playing?.Title}»");
+                }
+                player = PlayerView.Active!;
                 player.Close();
                 await Task.Delay(1200);
                 Shot("13-after-player");
@@ -388,6 +550,25 @@ static class SelfTest
 
     static string Outcome(PlayerView player) =>
         player.ReachedPlaying ? "OK (reproduciendo)" : player.HadError ? "ERROR" : "sin respuesta";
+
+    /// <summary>A wide picture (to check that the profile photo keeps the centre square).</summary>
+    static byte[] TestPicture()
+    {
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+        {
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(40, 70, 120)), null, new Rect(0, 0, 600, 400));
+            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(240, 180, 60)), null, new Point(300, 200), 130, 130);
+            dc.DrawRectangle(Brushes.White, null, new Rect(250, 170, 100, 60));
+        }
+        var bmp = new RenderTargetBitmap(600, 400, 96, 96, PixelFormats.Pbgra32);
+        bmp.Render(visual);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bmp));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return stream.ToArray();
+    }
 
     static System.Windows.Input.KeyEventArgs Key(System.Windows.Input.Key key) =>
         new(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(Application.Current.MainWindow!)!, 0, key)

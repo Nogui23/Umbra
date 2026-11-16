@@ -72,11 +72,22 @@ public partial class MainWindow : Window
             e.Handled = true;
         };
         PreviewKeyDown += OnPreviewKeyDown;
+        AppState.I.ProfileChanged += UpdateProfileButton;
 
         DownloadManager.I.Finished += item =>
         {
             if (item.State == DownloadState.Completed) Toast(L.T("Descarga completada: {0}", item.Title), "");
             else if (item.State == DownloadState.Failed) Toast(L.T("No se pudo descargar: {0}", item.Title), "");
+            else return;
+            // With the app minimised or behind other windows the message above is not seen: Windows shows it.
+            if (!AppState.I.Settings.NotifyDownloads || !DesktopNotice.AppHidden) return;
+            var done = item.State == DownloadState.Completed;
+            DesktopNotice.Show(L.T(done ? "Descarga completada" : "No se pudo descargar"), item.Title, () =>
+            {
+                if (WindowState == WindowState.Minimized) WindowState = _fullscreen ? WindowState.Maximized : WindowState.Normal;
+                Activate();
+                if (AppState.I.Library is not null) ShowDownloads();
+            });
         };
     }
 
@@ -118,6 +129,9 @@ public partial class MainWindow : Window
     {
         var compact = Ui.I.Compact;
         AccountLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        // The name of the profile only when there is room to spare: the circle already says who it is (and the
+        // tooltip and the menu give the name), so the bar does not crowd the sections in the middle.
+        ProfileLabel.Visibility = Ui.I.Width < 1760 ? Visibility.Collapsed : Visibility.Visible;
         BrandText.Visibility = Ui.I.Width < 1180 ? Visibility.Collapsed : Visibility.Visible;
         Dispatcher.BeginInvoke(() => MoveThumb(animate: false), DispatcherPriority.Loaded);
     }
@@ -185,10 +199,87 @@ public partial class MainWindow : Window
 
     public bool CanGoBack => _back.Count > 0;
 
+    // ----- Profiles -----
+
+    /// <summary>
+    /// First screen of the app: «¿Quién está viendo?» when there are several profiles, then the last list (or the
+    /// library / sign-in).
+    /// </summary>
+    public void Start()
+    {
+        if (AppState.I.Profiles.Items.Count > 1) ShowProfiles(_ => OpenStart());
+        else OpenStart();
+    }
+
+    void OpenStart()
+    {
+        var state = AppState.I;
+        var last = state.Accounts.Items.FirstOrDefault(a => a.Id == state.Settings.LastAccountId);
+        if (last is not null) _ = OpenAccountAsync(last, ContentSources.Create(last, state.Settings), force: false);
+        else ShowLogin();
+    }
+
+    /// <summary>«¿Quién está viendo?» as the whole screen, before anything else.</summary>
+    public void ShowProfiles(Action<Profile> then)
+    {
+        NavPill.Visibility = AccountArea.Visibility = Visibility.Collapsed;
+        _back.Clear();
+        ResetViews();
+        ShowContent(new ProfilesView(manage: false, then));
+    }
+
+    void UpdateProfileButton()
+    {
+        var profile = AppState.I.Profile;
+        ProfileAvatarTop.Profile = profile;
+        ProfileAvatarTop.Render();
+        ProfileLabel.Text = profile.Name;
+        ProfileButton.ToolTip = L.T("Perfil: {0}", profile.Name);
+        // Not over the profile screens themselves.
+        ProfileButton.Visibility = Host.Content is ProfilesView or ProfileEditView || Host.Content is LoadingView ? Visibility.Collapsed : Visibility.Visible;
+        ProfileDivider.Visibility = ProfileButton.Visibility;
+    }
+
+    void Profile_Click(object sender, RoutedEventArgs e)
+    {
+        var state = AppState.I;
+        var menu = new ContextMenu();
+        foreach (var profile in state.Profiles.Items)
+        {
+            var current = profile.Id == state.Profile.Id;
+            var item = new MenuItem
+            {
+                Header = profile.Name,
+                Icon = new ProfileAvatar { Profile = profile, Size = 26 },
+                FontWeight = current ? FontWeights.Bold : FontWeights.Normal,
+            };
+            item.Click += (_, _) => SwitchProfile(profile);
+            menu.Items.Add(item);
+        }
+        menu.Items.Add(new Separator());
+        var manage = new MenuItem { Header = L.T("Gestionar perfiles") };
+        manage.Click += (_, _) => Push(new ProfilesView(manage: true, null));
+        menu.Items.Add(manage);
+        menu.PlacementTarget = ProfileButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Changes the profile in use and shows the current screen again with that person's data.</summary>
+    public void SwitchProfile(Profile profile)
+    {
+        var state = AppState.I;
+        if (profile.Id == state.Profile.Id) return;
+        state.SwitchProfile(profile);
+        RebuildScreens();
+        Toast(L.T("Perfil: {0}", profile.Name), "");
+    }
+
     /// <summary>Assigns the host content with a soft transition.</summary>
     void ShowContent(UIElement view, Transition transition = Transition.Tab)
     {
         Host.Content = view;
+        UpdateProfileButton();
         if (!Motion.Enabled)
         {
             Host.RenderTransform = Transform.Identity;
@@ -363,6 +454,12 @@ public partial class MainWindow : Window
     public void ReloadLanguage()
     {
         UpdateWindowButtons();
+        RebuildScreens();
+    }
+
+    /// <summary>Builds every screen again (texts, favourites, progress) and shows the current one.</summary>
+    void RebuildScreens()
+    {
         if (AppState.I.Library is null)
         {
             ShowLogin(accounts: Host.Content is LoginView);
@@ -452,6 +549,7 @@ public partial class MainWindow : Window
     {
         PlayerView.Shutdown();
         DownloadManager.I.Shutdown();
+        DesktopNotice.Dispose();
         base.OnClosing(e);
     }
 }
