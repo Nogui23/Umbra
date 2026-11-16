@@ -43,6 +43,55 @@ static class SelfTest
             _ = RunAsync(window, account, args[2]);
             return true;
         }
+        if (args.Length >= 5 && args[0] == "--selftest-jellyfin")
+        {
+            var account = new Account { Type = AccountType.Jellyfin, Server = XtreamSource.NormalizeServer(args[1]), Username = args[2], Password = args[3], Name = "Prueba Jellyfin" };
+            _ = RunAsync(window, account, args[4]);
+            return true;
+        }
+        if (args.Length >= 5 && args[0] == "--selftest-plex")
+        {
+            // server ("-" to find it through the account), token, address standing in for plex.tv, output folder
+            PlexSource.PlexTv = args[3];
+            var account = new Account { Type = AccountType.Plex, Server = args[1] == "-" ? "" : XtreamSource.NormalizeServer(args[1]), Password = args[2], Name = "Prueba Plex" };
+            _ = StartPlexAsync();
+            return true;
+
+            // «user:password» instead of a token signs in first, as the form does.
+            async Task StartPlexAsync()
+            {
+                Directory.CreateDirectory(args[4]);
+                var notes = Path.Combine(args[4], "plex.txt");
+                try
+                {
+                    if (args[2].Split(':', 2) is [var user, var password])
+                    {
+                        string wrong;
+                        try { await PlexSource.SignInAsync(user, "mala", "", CancellationToken.None); wrong = "ACEPTADA"; }
+                        catch (SourceException ex) { wrong = ex.Message; }
+                        account.Username = user;
+                        account.Password = await PlexSource.SignInAsync(user, password, "", CancellationToken.None);
+                        File.WriteAllText(notes, $"contraseña mala: {wrong}\ninicio de sesión: token de cuenta obtenido\n");
+                    }
+                    var plex = new PlexSource(account, AppState.I.Settings);
+                    await plex.ConnectAsync(CancellationToken.None);
+                    File.AppendAllText(notes, $"servidor elegido: {plex.BaseUrl} · token del servidor distinto del de la cuenta: {plex.Token != account.Password}\n");
+                    account.Server = plex.BaseUrl;
+                    account.Password = plex.Token;
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(notes, "FALLO al conectar: " + ex.Message + "\n");
+                }
+                await RunAsync(window, account, args[4]);
+            }
+        }
+        if (args.Length >= 3 && args[0] == "--selftest-folder")
+        {
+            var account = new Account { Type = AccountType.Folder, Server = args[1], Name = "Prueba carpeta" };
+            _ = RunAsync(window, account, args[2]);
+            return true;
+        }
         return false;
     }
 
@@ -83,12 +132,26 @@ static class SelfTest
             foreach (var c in lib.Channels.Take(3)) state.AddRecentChannel(c);
             if (lib.Channels.Count > 4) state.ToggleFavorite(lib.Channels[4]);
             if (lib.Movies.Count > 2) state.ToggleFavorite(lib.Movies[2]);
+            foreach (var movie in lib.Movies.Take(2)) state.SaveResume(AppState.Key(MediaKind.Movie, movie.Id), 600_000);
             window.EnterShell(account);
             await Task.Delay(3200);
             Shot("02-home");
+            if (state.MovieResumeCount > 0)
+            {
+                state.ClearProgress(AppState.Key(MediaKind.Movie, lib.Movies[0].Id));
+                window.RefreshCurrent();
+                await Task.Delay(900);
+                Shot("02b-home-one-removed");
+                var left = state.MovieResumeCount;
+                state.ClearMovieResumes();
+                window.RefreshCurrent();
+                await Task.Delay(900);
+                Shot("02c-home-cleared");
+                Line($"seguir viendo: quedaba {left} tras quitar una, {state.MovieResumeCount} tras limpiar");
+            }
             Line("pantalla NavHome: OK");
 
-            foreach (var (nav, file) in new[] { ("NavLive", "03-live"), ("NavMovies", "04-movies"), ("NavSeries", "05-series"), ("NavAccount", "07-account"), ("NavSettings", "08-settings") })
+            foreach (var (nav, file) in new[] { ("NavLive", "03-live"), ("NavMovies", "04-movies"), ("NavSeries", "05-series"), ("NavAccount", "07-account"), ("NavDownloads", "07b-downloads"), ("NavSettings", "08-settings") })
             {
                 window.SelectNav(nav);
                 await Task.Delay(nav == "NavLive" ? 3500 : 2600);
@@ -127,9 +190,15 @@ static class SelfTest
                 var d = await source.GetMovieDetailAsync(lib.Movies[0], CancellationToken.None);
                 Line($"ficha película: {d.Name} | {d.Genre} | {d.Duration} | trama={d.Plot.Length} car.");
                 window.SelectNav("NavMovies");
+                var resumeKey = AppState.Key(MediaKind.Movie, lib.Movies[0].Id);
+                state.SaveResume(resumeKey, 754_000);
                 window.Push(new MovieDetailView(lib.Movies[0]));
                 await Task.Delay(2800);
                 Shot("09-movie-detail");
+                state.ClearProgress(resumeKey);
+                window.RefreshCurrent();
+                await Task.Delay(700);
+                Shot("09b-movie-detail-forgotten");
                 window.GoBack();
             }
 
@@ -172,6 +241,111 @@ static class SelfTest
                 Line($"reproducción película 1: {Outcome(player)} tras {waited} ms");
                 CapturePlayer(window, player, Path.Combine(outDir, "14-player-vod.png"));
                 PlayerView.Shutdown();
+            }
+
+            // Downloads: only with an isolated data folder (UMBRA_HOME), so the user's own list is never touched.
+            if (Environment.GetEnvironmentVariable("UMBRA_HOME") is { Length: > 0 } && lib.Movies.Count > 0)
+            {
+                var downloads = DownloadManager.I;
+                downloads.Folder = Path.Combine(outDir, "descargas");
+                downloads.Start(SynchronizationContext.Current);
+                var m = lib.Movies[0];
+                var key = AppState.Key(MediaKind.Movie, m.Id);
+                state.StartDownload(key, source.GetMovieUrl(m), m.Name, "", m.Image, null, m.Name, m.Extension, isEpisode: false, quiet: true);
+                if (lib.Series.Count > 0)
+                {
+                    window.SelectNav("NavSeries");
+                    var seriesView = new SeriesDetailView(lib.Series[0]);
+                    window.Push(seriesView);
+                    await Task.Delay(1500);
+                    seriesView.DownloadSeason();
+                }
+                for (var i = 0; i < 150 && downloads.HasPending; i++) await Task.Delay(200);
+                await Task.Delay(800);
+                Shot("15-series-downloaded");
+                window.ShowDownloads();
+                await Task.Delay(1800);
+                Shot("16-downloads");
+                window.SelectNav("NavLibrary");
+                await Task.Delay(1800);
+                Shot("16b-library");
+                if (lib.Series.Count > 0)
+                {
+                    window.Push(new LibraryView(lib.Series[0].Name));
+                    await Task.Delay(1500);
+                    Shot("16c-library-series");
+                    window.GoBack();
+                }
+                Line("descargas: " + string.Join(", ", downloads.Items.Select(i => $"{i.Title}={i.State}")));
+                window.SelectNav("NavMovies");
+                window.Push(new MovieDetailView(m));
+                await Task.Delay(1500);
+                Shot("17-movie-downloaded");
+                window.GoBack();
+                var local = state.PlayUrl(key, source.GetMovieUrl(m));
+                Line("película descargada se reproduce desde: " + (File.Exists(local) ? "el archivo en disco" : "EL STREAM"));
+                if (File.Exists(local))
+                {
+                    PlayerView.Open(new[] { new PlayItem { Title = m.Name, Url = local, ResumeKey = key } }, 0);
+                    var player = PlayerView.Active!;
+                    var waited = await WaitForPlayback(player);
+                    await Task.Delay(1500);
+                    Line($"reproducción del archivo descargado: {Outcome(player)} tras {waited} ms");
+                    PlayerView.Shutdown();
+                }
+                window.SelectNav("NavLibrary");
+                await Task.Delay(1500);
+                if (window.FindName("Host") is System.Windows.Controls.ContentControl { Content: LibraryView libraryView })
+                {
+                    var zipPath = Path.Combine(outDir, "biblioteca.zip");
+                    libraryView.BeginSelection();
+                    libraryView.SelectAll();
+                    await Task.Delay(700);
+                    Shot("16e-library-selecting");
+                    await libraryView.ExportToAsync(zipPath);
+                    var countBefore = downloads.Items.Count;
+                    await libraryView.ImportFromAsync(zipPath);
+                    Line($"exportar: zip de {new FileInfo(zipPath).Length / 1024} KB · importar el mismo zip no duplica: {downloads.Items.Count == countBefore}");
+                    foreach (var item in downloads.Items.ToList()) downloads.Remove(item);
+                    await Task.Delay(1500);
+                    await libraryView.ImportFromAsync(zipPath);
+                    await Task.Delay(1200);
+                    Shot("16f-library-imported");
+                    Line("tras borrar e importar: " + string.Join(", ", downloads.Items.Select(i => $"{i.Title}={i.State}/{i.AccountId}/{File.Exists(i.FilePath)}")));
+                }
+                // The library without any account: from the sign-in screen, playing straight from disk.
+                state.EndSession(forgetLastAccount: false);
+                window.ShowLogin();
+                await Task.Delay(1500);
+                Shot("18-start-library");
+                window.Push(new SettingsView());
+                await Task.Delay(1500);
+                Shot("18a-library-settings");
+                window.GoBack();
+                window.ShowLogin(accounts: true);
+                await Task.Delay(1200);
+                Shot("18b-login-library-button");
+                window.ShowLibraryOffline();
+                await Task.Delay(1800);
+                Shot("19-library-offline");
+                if (downloads.Items.FirstOrDefault(i => i.IsCompleted && !i.IsEpisode) is { } saved)
+                {
+                    window.Push(new LibraryDetailView(saved));
+                    await Task.Delay(1800);
+                    Shot("20-library-detail-offline");
+                    Line($"ficha guardada con la descarga: {(saved.Info is null ? "NO" : "sí")} · imagen en disco: {File.Exists(saved.Image)}");
+                    window.GoBack();
+                    state.UseDataOf(saved.AccountId);
+                    PlayerView.Open(new[] { new PlayItem { Title = saved.Title, Url = saved.FilePath, ResumeKey = saved.Key } }, 0);
+                    var player = PlayerView.Active!;
+                    var waited = await WaitForPlayback(player);
+                    await Task.Delay(1500);
+                    Line($"biblioteca sin cuenta, reproducción: {Outcome(player)} tras {waited} ms");
+                    PlayerView.Shutdown();
+                }
+                foreach (var item in downloads.Items.ToList()) downloads.Remove(item);
+                downloads.Shutdown();
+                await Task.Delay(800);
             }
 
             Line("RESULTADO: completado");

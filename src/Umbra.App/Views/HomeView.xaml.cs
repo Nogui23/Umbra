@@ -14,11 +14,16 @@ public partial class HomeView : UserControl, IRefreshable
 
     readonly AppState S = AppState.I;
     string _signature = "";
+    readonly System.Windows.Threading.DispatcherTimer _connectionsTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    bool _askingConnections;
 
     public HomeView()
     {
         InitializeComponent();
         Loaded += (_, _) => Motion.Stagger(Page.Children.OfType<FrameworkElement>(), 40, 70);
+        // The figure changes outside the app (other devices), so it is asked again while the screen is on view.
+        _connectionsTimer.Tick += (_, _) => UpdateConnections();
+        IsVisibleChanged += (_, _) => _connectionsTimer.IsEnabled = IsVisible;
     }
 
     public void Refresh()
@@ -31,6 +36,8 @@ public partial class HomeView : UserControl, IRefreshable
         LiveCount.Text = Plural(lib.Channels.Count, "1 canal", "{0:N0} canales");
         MovieCount.Text = Plural(lib.Movies.Count, "1 película", "{0:N0} películas");
         SeriesCount.Text = Plural(lib.Series.Count, "1 serie", "{0:N0} series");
+        ShowConnections(S.Source?.Info);
+        UpdateConnections();
 
         bool Visible(MediaKind kind, string categoryId) => !S.IsHidden(kind, categoryId);
         var channels = lib.Channels.Where(c => Visible(MediaKind.Live, c.CategoryId));
@@ -54,7 +61,7 @@ public partial class HomeView : UserControl, IRefreshable
         _signature = signature;
 
         Shelves.Children.Clear();
-        AddPosterShelf("Seguir viendo", resume, nameof(MainWindow.NavMovies));
+        AddResumeShelf(resume);
         AddChannelShelf("Vistos recientemente", recent);
         AddChannelShelf("Canales favoritos", favChannels);
         AddChannelShelf("Canales", firstChannels);
@@ -63,9 +70,106 @@ public partial class HomeView : UserControl, IRefreshable
         AddPosterShelf("Series recién actualizadas", newSeries, nameof(MainWindow.NavSeries));
     }
 
+    /// <summary>Asks the provider how many connections are in use and shows how many are left.</summary>
+    async void UpdateConnections()
+    {
+        var source = S.Source;
+        if (source is null || _askingConnections || App.Quiet) return;
+        _askingConnections = true;
+        try
+        {
+            var info = await Task.Run(() => source.RefreshInfoAsync(CancellationToken.None));
+            if (ReferenceEquals(source, S.Source)) ShowConnections(info);
+        }
+        catch (Exception ex)
+        {
+            // Keeps the last known figure: a failed query says nothing about the connections.
+            Log.Error("No se pudieron consultar las conexiones", ex);
+        }
+        finally { _askingConnections = false; }
+    }
+
+    void ShowConnections(AccountInfo? info)
+    {
+        // Lists without an account (M3U) and accounts without a limit have nothing to count.
+        if (info is not { MaxConnections: > 0 })
+        {
+            ConnectionsPill.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var free = Math.Max(0, info.MaxConnections - info.ActiveConnections);
+        ConnectionsText.Text = info.MaxConnections == 1
+            ? L.T(free == 1 ? "Conexión libre" : "Conexión en uso")
+            : L.T("{0} de {1} conexiones libres", free, info.MaxConnections);
+        ConnectionsDot.Fill = new System.Windows.Media.SolidColorBrush(free > 0
+            ? System.Windows.Media.Color.FromRgb(0x30, 0xD1, 0x58)
+            : System.Windows.Media.Color.FromRgb(0xFF, 0x9F, 0x0A));
+        ConnectionsPill.ToolTip = L.T("En uso ahora mismo: {0} de {1}. Las descargas de Umbra también ocupan conexión.",
+            info.ActiveConnections, info.MaxConnections);
+        ConnectionsPill.Visibility = Visibility.Visible;
+    }
+
+    void Connections_Click(object sender, RoutedEventArgs e) => MainWindow.Instance.SelectNav(nameof(MainWindow.NavAccount));
+
     static string Plural(int count, string one, string many) => count == 1 ? L.T(one) : L.T(many, count);
 
-    void AddPosterShelf(string title, List<object> items, string? nav) =>
+    /// <summary>
+    /// «Seguir viendo»: besides opening a movie, it can be tidied up — right-click a poster to take it off the shelf,
+    /// or «Limpiar» to empty it.
+    /// </summary>
+    void AddResumeShelf(List<object> items)
+    {
+        if (items.Count == 0) return;
+        var (header, row) = AddPosterShelf("Seguir viendo", items, nameof(MainWindow.NavMovies));
+
+        var clear = new Button
+        {
+            Content = L.T("Limpiar"),
+            Style = (Style)FindResource("GhostButton"),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            ToolTip = L.T("Quitar todas las películas de «Seguir viendo»"),
+        };
+        clear.Click += (_, _) =>
+        {
+            var count = S.MovieResumeCount;
+            var message = count == 1
+                ? L.T("Se olvidará por dónde ibas en 1 película. No se borra ninguna descarga ni favorita.")
+                : L.T("Se olvidará por dónde ibas en {0} películas. No se borra ninguna descarga ni favorita.", count);
+            if (!Sheet.Confirm("¿Vaciar «Seguir viendo»?", message, "Vaciar")) return;
+            S.ClearMovieResumes();
+            Refresh();
+            MainWindow.Instance.Toast("«Seguir viendo» está vacío", "");
+        };
+        // «Limpiar» sits to the left of «Ver todo».
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        foreach (var button in header.Children.OfType<Button>().ToList())
+        {
+            header.Children.Remove(button);
+            actions.Children.Add(button);
+        }
+        actions.Children.Insert(0, clear);
+        header.Children.Add(actions);
+
+        var remove = new MenuItem { Header = L.T("Quitar de «Seguir viendo»") };
+        var menu = new ContextMenu();
+        menu.Items.Add(remove);
+        row.ContextMenu = menu;
+        row.ContextMenuOpening += (_, e) =>
+        {
+            // The menu belongs to a poster: nothing opens on the gaps between them.
+            if (e.OriginalSource is FrameworkElement { DataContext: Movie movie }) remove.Tag = movie;
+            else e.Handled = true;
+        };
+        remove.Click += (_, _) =>
+        {
+            if (remove.Tag is not Movie movie) return;
+            S.ClearProgress(AppState.Key(MediaKind.Movie, movie.Id));
+            Refresh();
+            MainWindow.Instance.Toast("Quitada de «Seguir viendo»", "");
+        };
+    }
+
+    (Grid Header, ItemsControl Row) AddPosterShelf(string title, List<object> items, string? nav) =>
         AddShelf(title, items, "PosterTemplate", PosterCell, PosterShelfHeight, nav, (_, e) =>
         {
             if (e.OriginalSource is not FrameworkElement { DataContext: PosterItem item }) return;
@@ -73,16 +177,15 @@ public partial class HomeView : UserControl, IRefreshable
         });
 
     void AddChannelShelf(string title, List<object> items) =>
-        AddShelf(title, items, "ChannelCardTemplate", ChannelCell, ChannelShelfHeight, nameof(MainWindow.NavLive), (_, e) =>
+        _ = AddShelf(title, items, "ChannelCardTemplate", ChannelCell, ChannelShelfHeight, nameof(MainWindow.NavLive), (_, e) =>
         {
             if (e.OriginalSource is not FrameworkElement { DataContext: Channel channel }) return;
             PlayerView.OpenChannels(items.OfType<Channel>().ToList(), channel);
         });
 
     /// <summary>A titled single row: as many tiles as fit the width, the rest is reached through «Ver todo».</summary>
-    void AddShelf(string title, List<object> items, string template, double cellWidth, double height, string? nav, RoutedEventHandler click)
+    (Grid Header, ItemsControl Row) AddShelf(string title, List<object> items, string template, double cellWidth, double height, string? nav, RoutedEventHandler click)
     {
-        if (items.Count == 0) return;
 
         var header = new Grid { Margin = new Thickness(2, 0, 0, 4) };
         header.Children.Add(new TextBlock { Text = L.T(title), Style = (Style)FindResource("H2"), VerticalAlignment = VerticalAlignment.Center });
@@ -117,7 +220,9 @@ public partial class HomeView : UserControl, IRefreshable
         var shelf = new StackPanel { Margin = new Thickness(0, 34, 0, 0) };
         shelf.Children.Add(header);
         shelf.Children.Add(row);
-        Shelves.Children.Add(shelf);
+        // An empty shelf is built but not shown.
+        if (items.Count > 0) Shelves.Children.Add(shelf);
+        return (header, row);
     }
 
     void Quick_Click(object sender, RoutedEventArgs e)

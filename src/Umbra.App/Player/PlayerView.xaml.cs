@@ -235,7 +235,19 @@ public partial class PlayerView : UserControl
         SetPlayGlyph(playing: true);
         ShowStatus("Cargando…", busy: true);
 
-        var media = new Media(Lib, item.Url, FromType.FromLocation);
+        // A downloaded file plays from disk; a stream needs a connection, which the downloads may be using.
+        var local = !item.Url.Contains("://", StringComparison.Ordinal);
+        var downloads = DownloadManager.I;
+        if (!local && downloads.RunningCount > 0 && S.DownloadsLeaveNoConnection)
+        {
+            downloads.Suspended = true;
+            Toast("Descargas en pausa mientras ves el vídeo");
+        }
+        else if (local)
+        {
+            downloads.Suspended = false;
+        }
+        var media = new Media(Lib, item.Url, local ? FromType.FromPath : FromType.FromLocation);
         media.AddOption($":network-caching={S.Settings.NetworkCachingMs}");
         media.AddOption($":http-user-agent={S.Settings.UserAgent}");
         media.AddOption(":http-reconnect");
@@ -847,6 +859,7 @@ public partial class PlayerView : UserControl
     {
         if (_disposed) return;
         _disposed = true;
+        if (_instance is null) DownloadManager.I.Suspended = false; // the stream is stopped: the connection is free again
         _hideTimer.Stop();
         _toastTimer.Stop();
         _retryTimer.Stop();

@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Version of Umbra, shared by every project. To publish a new one:
+      1. change it here (major.minor.patch),
+      2. move the «Sin publicar» notes of CHANGELOG.md under the new number, with the date,
+      3. commit and tag it: git tag -a vX.Y.Z -m "Umbra X.Y.Z"
+  -->
+  <PropertyGroup>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
+</Project>

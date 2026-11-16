@@ -11,7 +11,6 @@
     <RootNamespace>Umbra.App</RootNamespace>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
-    <Version>1.0.0</Version>
     <Product>Umbra</Product>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- WPF Fluent theme (ThemeMode) is marked experimental in .NET 9. -->

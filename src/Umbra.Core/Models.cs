@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace Umbra.Core;
 
-public enum AccountType { Xtream, M3U }
+public enum AccountType { Xtream, M3U, Jellyfin, Folder, Plex }
 
 public enum MediaKind { Live, Movie, Series }
 
@@ -45,14 +45,27 @@ public sealed class Account
     [JsonIgnore] public bool PasswordUnreadable { get; set; }
     [JsonIgnore] public bool M3uSourceUnreadable { get; set; }
 
-    [JsonIgnore] public string KindText => Type == AccountType.Xtream ? "Xtream Codes" : L.T("Lista M3U");
+    [JsonIgnore]
+    public string KindText => Type switch
+    {
+        AccountType.Xtream => "Xtream Codes",
+        AccountType.Jellyfin => "Jellyfin · Emby",
+        AccountType.Plex => "Plex",
+        AccountType.Folder => L.T("Carpeta · NAS"),
+        _ => L.T("Lista M3U"),
+    };
+
+    /// <summary>Signs in with a user on a server (as opposed to a playlist or a folder).</summary>
+    [JsonIgnore] public bool HasLogin => Type is AccountType.Xtream or AccountType.Jellyfin;
 
     [JsonIgnore]
     public string DetailText
     {
         get
         {
-            if (Type == AccountType.Xtream) return $"{Username} · {HostOf(Server)}";
+            if (HasLogin) return $"{Username} · {HostOf(Server)}";
+            if (Type == AccountType.Folder) return Server;
+            if (Type == AccountType.Plex) return Username.Length > 0 ? $"{Username} · {HostOf(Server)}" : HostOf(Server);
             if (File.Exists(M3uSource)) return Path.GetFileName(M3uSource);
             return HostOf(M3uSource);
         }
@@ -204,6 +217,10 @@ public sealed class Episode : ObservableObject
     double _progress;
     /// <summary>0..1 position of the saved resume point, 0 when there is none.</summary>
     public double Progress { get => _progress; set => Set(ref _progress, value); }
+
+    DownloadItem? _download;
+    /// <summary>The episode's entry in the download list, null when it has not been downloaded.</summary>
+    public DownloadItem? Download { get => _download; set => Set(ref _download, value); }
 }
 
 public sealed class EpgProgram : ObservableObject

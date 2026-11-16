@@ -37,6 +37,7 @@ public partial class App : Application
             window.Height = height;
         }
         window.Show();
+        if (!Quiet) DownloadManager.I.Start(new DispatcherSynchronizationContext(Dispatcher));
 
         if (SelfTest.TryStart(window, e.Args)) return;
 

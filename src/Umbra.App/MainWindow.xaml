@@ -58,6 +58,7 @@
                             <RadioButton x:Name="NavLive" Style="{StaticResource NavTab}" Tag="&#xE7F4;" Content="{local:T 'Directo'}" Checked="Nav_Checked"/>
                             <RadioButton x:Name="NavMovies" Style="{StaticResource NavTab}" Tag="&#xE8B2;" Content="{local:T 'Películas'}" Checked="Nav_Checked"/>
                             <RadioButton x:Name="NavSeries" Style="{StaticResource NavTab}" Tag="&#xE8F1;" Content="{local:T 'Series'}" Checked="Nav_Checked"/>
+                            <RadioButton x:Name="NavLibrary" Style="{StaticResource NavTab}" Tag="&#xE8B7;" Content="{local:T 'Biblioteca'}" Checked="Nav_Checked"/>
                             <RadioButton x:Name="NavSearch" Style="{StaticResource NavTab}" Tag="&#xE721;" Content="{local:T 'Buscar'}" Checked="Nav_Checked"/>
                         </StackPanel>
                     </Grid>
@@ -76,6 +77,8 @@
                                            TextTrimming="CharacterEllipsis" Margin="10,0,8,0" VerticalAlignment="Center"/>
                             </StackPanel>
                         </RadioButton>
+                        <RadioButton x:Name="NavDownloads" Style="{StaticResource NavIcon}" Width="42" Height="42" Margin="6,0,0,0"
+                                     Content="&#xE896;" ToolTip="{local:T 'Descargas'}" Checked="Nav_Checked"/>
                         <RadioButton x:Name="NavSettings" Style="{StaticResource NavIcon}" Width="42" Height="42" Margin="6,0,0,0"
                                      Content="&#xE713;" ToolTip="{local:T 'Ajustes'}" Checked="Nav_Checked"/>
                         <Rectangle Width="1" Height="20" Fill="{StaticResource HairlineStrong}" Margin="12,0,8,0"/>

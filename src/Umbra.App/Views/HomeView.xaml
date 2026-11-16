@@ -4,10 +4,24 @@
              xmlns:local="clr-namespace:Umbra.App">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="Page" Margin="48,14,48,60">
-            <StackPanel>
-                <TextBlock x:Name="Greeting" Style="{StaticResource LargeTitle}" FontSize="44"/>
-                <TextBlock x:Name="SubGreeting" Foreground="{StaticResource MutedBrush}" FontSize="16" Margin="2,6,0,0"/>
-            </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock x:Name="Greeting" Style="{StaticResource LargeTitle}" FontSize="44"/>
+                    <TextBlock x:Name="SubGreeting" Foreground="{StaticResource MutedBrush}" FontSize="16" Margin="2,6,0,0"/>
+                </StackPanel>
+                <!-- Connections the account has free right now; only for providers that report a limit -->
+                <Button x:Name="ConnectionsPill" Grid.Column="1" Style="{StaticResource SubtleButton}" Padding="16,10"
+                        VerticalAlignment="Bottom" Margin="16,0,0,2" Visibility="Collapsed" Click="Connections_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="ConnectionsDot" Width="9" Height="9" Margin="0,1,10,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="ConnectionsText" FontSize="13.5" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
 
             <!-- Three big doors into the catalogue -->
             <UniformGrid x:Name="Quick" Rows="1" Margin="-8,30,-8,0">

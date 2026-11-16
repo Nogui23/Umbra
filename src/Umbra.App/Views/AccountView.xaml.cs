@@ -81,10 +81,19 @@ public partial class AccountView : UserControl, IRefreshable
         }
 
         InfoRows.Children.Clear();
-        if (a.Type == AccountType.Xtream)
+        if (a.HasLogin)
         {
             Row("Servidor", a.Server);
             Row("Usuario", a.Username);
+        }
+        else if (a.Type == AccountType.Folder)
+        {
+            Row("Carpeta", a.Server);
+        }
+        else if (a.Type == AccountType.Plex)
+        {
+            Row("Servidor", a.Server);
+            if (a.Username.Length > 0) Row("Usuario", a.Username);
         }
         else
         {
@@ -154,6 +163,6 @@ public partial class AccountView : UserControl, IRefreshable
     {
         PlayerView.Shutdown();
         S.EndSession(forgetLastAccount: true);
-        MainWindow.Instance.ShowLogin();
+        MainWindow.Instance.ShowLogin(accounts: true);
     }
 }

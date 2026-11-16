@@ -29,6 +29,8 @@ public partial class MainWindow : Window
     BrowserView? _movies, _series;
     SearchView? _search;
     AccountView? _account;
+    DownloadsView? _downloads;
+    LibraryView? _library;
     SettingsView? _settings;
     RadioButton? _currentNav;
     bool _fullscreen, _thumbPlaced;
@@ -70,6 +72,12 @@ public partial class MainWindow : Window
             e.Handled = true;
         };
         PreviewKeyDown += OnPreviewKeyDown;
+
+        DownloadManager.I.Finished += item =>
+        {
+            if (item.State == DownloadState.Completed) Toast(L.T("Descarga completada: {0}", item.Title), "");
+            else if (item.State == DownloadState.Failed) Toast(L.T("No se pudo descargar: {0}", item.Title), "");
+        };
     }
 
     void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -162,13 +170,20 @@ public partial class MainWindow : Window
 
     // ----- Screens -----
 
-    public void ShowLogin(string? error = null)
+    /// <summary>
+    /// The screen shown with no account open. When something is downloaded that is the library, ready to watch;
+    /// the accounts are one button away. With <paramref name="accounts"/> (or an error to show) it is the accounts.
+    /// </summary>
+    public void ShowLogin(string? error = null, bool accounts = false)
     {
         NavPill.Visibility = AccountArea.Visibility = Visibility.Collapsed;
         _back.Clear();
         ResetViews();
-        ShowContent(new LoginView(error));
+        var library = error is null && !accounts && DownloadManager.I.Items.Any(i => i.IsCompleted);
+        ShowContent(library ? new LibraryView() : new LoginView(error));
     }
+
+    public bool CanGoBack => _back.Count > 0;
 
     /// <summary>Assigns the host content with a soft transition.</summary>
     void ShowContent(UIElement view, Transition transition = Transition.Tab)
@@ -251,10 +266,12 @@ public partial class MainWindow : Window
         _movies = _series = null;
         _search = null;
         _account = null;
+        _downloads = null;
+        _library = null;
         _settings = null;
         _currentNav = null;
         _thumbPlaced = false;
-        foreach (var rb in new[] { NavHome, NavLive, NavMovies, NavSeries, NavSearch, NavAccount, NavSettings })
+        foreach (var rb in new[] { NavHome, NavLive, NavMovies, NavSeries, NavLibrary, NavSearch, NavAccount, NavDownloads, NavSettings })
             rb.IsChecked = false;
     }
 
@@ -277,6 +294,8 @@ public partial class MainWindow : Window
             nameof(NavSeries) => _series ??= new BrowserView(MediaKind.Series),
             nameof(NavSearch) => _search ??= new SearchView(),
             nameof(NavAccount) => _account ??= new AccountView(),
+            nameof(NavDownloads) => _downloads ??= new DownloadsView(),
+            nameof(NavLibrary) => _library ??= new LibraryView(),
             _ => _settings ??= new SettingsView(),
         };
         ShowContent(view);
@@ -332,6 +351,11 @@ public partial class MainWindow : Window
         else rb.IsChecked = true;
     }
 
+    public void ShowDownloads() => SelectNav(nameof(NavDownloads));
+
+    /// <summary>Opens the downloaded movies and episodes over the sign-in screen, with no account loaded.</summary>
+    public void ShowLibraryOffline() => Push(new LibraryView());
+
     /// <summary>
     /// Applies a language change: texts written in XAML follow by themselves; the screens are rebuilt so the texts
     /// they compose in code are written again in the new language.
@@ -341,7 +365,7 @@ public partial class MainWindow : Window
         UpdateWindowButtons();
         if (AppState.I.Library is null)
         {
-            ShowLogin();
+            ShowLogin(accounts: Host.Content is LoginView);
             return;
         }
         _back.Clear();
@@ -350,6 +374,8 @@ public partial class MainWindow : Window
         _movies = _series = null;
         _search = null;
         _account = null;
+        _downloads = null;
+        _library = null;
         _settings = null;
         if (_currentNav is not null) Show(_currentNav);
     }
@@ -425,6 +451,7 @@ public partial class MainWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         PlayerView.Shutdown();
+        DownloadManager.I.Shutdown();
         base.OnClosing(e);
     }
 }

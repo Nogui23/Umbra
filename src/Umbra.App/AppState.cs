@@ -8,6 +8,7 @@ public sealed class AppState
     public static AppState I { get; } = new();
 
     readonly HashSet<string> _unlocked = new();
+    string? _dataId; // account whose favourites and progress are in Data
 
     public Settings Settings { get; private set; } = new();
     public AccountStore Accounts { get; } = new();
@@ -22,12 +23,20 @@ public sealed class AppState
     {
         Settings = JsonStore.Load<Settings>("settings.json");
         if (loadAccounts) Accounts.Load();
+        ApplySettings();
+    }
+
+    void ApplySettings()
+    {
         Http.UserAgent = string.IsNullOrWhiteSpace(Settings.UserAgent) ? Settings.DefaultUserAgent : Settings.UserAgent;
+        Downloads.Folder = string.IsNullOrWhiteSpace(Settings.DownloadFolder) ? DownloadManager.DefaultFolder : Settings.DownloadFolder;
+        Downloads.MaxParallel = Settings.MaxParallelDownloads;
+        Downloads.ReconnectWhenThrottled = Settings.ReconnectSlowDownloads;
     }
 
     public void SaveSettings()
     {
-        Http.UserAgent = string.IsNullOrWhiteSpace(Settings.UserAgent) ? Settings.DefaultUserAgent : Settings.UserAgent;
+        ApplySettings();
         try { JsonStore.Save("settings.json", Settings); }
         catch (Exception ex) { Log.Error("No se pudieron guardar los ajustes", ex); }
     }
@@ -43,6 +52,7 @@ public sealed class AppState
             Data = JsonStore.Load<UserData>(DataFile(account));
             _unlocked.Clear();
         }
+        _dataId = account.Id;
         ApplyUserData();
         if (persist)
         {
@@ -53,6 +63,7 @@ public sealed class AppState
             SaveSettings();
         }
         LibraryChanged?.Invoke();
+        if (Downloads.HasPending) EnsureAccountInfo();
     }
 
     public void EndSession(bool forgetLastAccount)
@@ -61,6 +72,7 @@ public sealed class AppState
         Source = null;
         Library = null;
         Data = new UserData();
+        _dataId = null;
         _unlocked.Clear();
         if (forgetLastAccount)
         {
@@ -69,12 +81,24 @@ public sealed class AppState
         }
     }
 
-    static string DataFile(Account account) => $"userdata_{account.Id}.json";
+    static string DataFile(Account account) => DataFile(account.Id);
+    static string DataFile(string accountId) => $"userdata_{accountId}.json";
+
+    /// <summary>
+    /// With no account open (the library reached from the sign-in screen), loads the progress of the account a
+    /// download belongs to, so it resumes where it was left and what is watched now is remembered.
+    /// </summary>
+    public void UseDataOf(string accountId)
+    {
+        if (Account is not null || accountId.Length == 0 || _dataId == accountId) return;
+        Data = JsonStore.Load<UserData>(DataFile(accountId));
+        _dataId = accountId;
+    }
 
     public void SaveData()
     {
-        if (Account is null) return;
-        try { JsonStore.Save(DataFile(Account), Data); }
+        if (_dataId is null) return;
+        try { JsonStore.Save(DataFile(_dataId), Data); }
         catch (Exception ex) { Log.Error("No se pudieron guardar los datos de usuario", ex); }
     }
 
@@ -144,6 +168,17 @@ public sealed class AppState
         SaveData();
     }
 
+    /// <summary>Number of movies with a saved resume point (the «Seguir viendo» shelf).</summary>
+    public int MovieResumeCount => Data.Resume.Keys.Count(k => k.StartsWith("movie:", StringComparison.Ordinal));
+
+    /// <summary>Forgets the resume point of every movie, emptying the «Seguir viendo» shelf.</summary>
+    public void ClearMovieResumes()
+    {
+        foreach (var key in Data.Resume.Keys.Where(k => k.StartsWith("movie:", StringComparison.Ordinal)).ToList())
+            Data.Resume.Remove(key);
+        SaveData();
+    }
+
     public void AddRecentChannel(Channel channel)
     {
         Data.LastChannelId = channel.Id;
@@ -151,6 +186,50 @@ public sealed class AppState
         Data.RecentChannels.Insert(0, channel.Id);
         if (Data.RecentChannels.Count > 40) Data.RecentChannels.RemoveRange(40, Data.RecentChannels.Count - 40);
         SaveData();
+    }
+
+    // ----- Downloads -----
+
+    static DownloadManager Downloads => DownloadManager.I;
+
+    /// <summary>The download of that movie or episode in the open account, if there is one.</summary>
+    public DownloadItem? DownloadOf(string key) => Account is null ? null : Downloads.Find(Account.Id, key);
+
+    /// <summary>The downloaded file when there is one, so it plays without using the connection; otherwise the stream.</summary>
+    public string PlayUrl(string key, string streamUrl) =>
+        Account is null ? streamUrl : Downloads.LocalFile(Account.Id, key) ?? streamUrl;
+
+    /// <summary>Queues a movie or episode for download; false when it is already on the list or cannot be saved.</summary>
+    public bool StartDownload(string key, string url, string title, string subtitle, string image,
+        string? subfolder, string fileName, string extension, bool isEpisode, bool quiet = false, DownloadInfo? info = null)
+    {
+        if (Account is null || Downloads.Find(Account.Id, key) is not null) return false;
+        if (!DownloadManager.CanDownload(url))
+        {
+            if (!quiet)
+                Sheet.Warn("No se puede descargar", "Este contenido se emite como streaming y no como un archivo, así que no se puede guardar.");
+            return false;
+        }
+        var item = Downloads.Enqueue(new DownloadRequest(Account.Id, key, url, title, subtitle, image, subfolder, fileName, extension, isEpisode));
+        if (info is not null) Downloads.SetInfo(item, info);
+        EnsureAccountInfo();
+        return true;
+    }
+
+    /// <summary>True when the downloads can take every connection the account allows, leaving none to play a stream.</summary>
+    public bool DownloadsLeaveNoConnection =>
+        Source?.Info is { MaxConnections: > 0 } info && info.MaxConnections <= Downloads.MaxParallel;
+
+    /// <summary>The connection limit decides whether downloads must wait while a stream plays; ask for it if unknown.</summary>
+    void EnsureAccountInfo()
+    {
+        var source = Source;
+        if (source is null || source.Info is not null) return;
+        _ = Task.Run(async () =>
+        {
+            try { await source.RefreshInfoAsync(CancellationToken.None); }
+            catch (Exception ex) { Log.Error("No se pudo consultar el límite de conexiones", ex); }
+        });
     }
 
     // ----- Parental control -----

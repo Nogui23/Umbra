@@ -24,6 +24,9 @@ public static class ContentSources
     public static IContentSource Create(Account account, Settings settings) => account.Type switch
     {
         AccountType.Xtream => new XtreamSource(account, settings),
+        AccountType.Jellyfin => new JellyfinSource(account, settings),
+        AccountType.Folder => new FolderSource(account, settings),
+        AccountType.Plex => new PlexSource(account, settings),
         _ => new M3uSource(account, settings),
     };
 }

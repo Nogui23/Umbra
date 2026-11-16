@@ -22,6 +22,9 @@ public partial class SettingsView : UserControl
         EpgOffset.Select(st.EpgOffsetHours.ToString(), "0");
         CacheHours.Select(st.CacheHours.ToString(), "24");
         UiZoom.Select(st.UiZoom.ToString(), "100");
+        ParallelDownloads.Select(st.MaxParallelDownloads.ToString(), "1");
+        DownloadFolderText.Text = DownloadManager.I.Folder;
+        ReconnectDownloads.IsChecked = st.ReconnectSlowDownloads;
         Language.Select(L.Language, L.Spanish);
         HwDecoding.IsChecked = st.HardwareDecoding;
         AutoNext.IsChecked = st.AutoPlayNextEpisode;
@@ -38,11 +41,27 @@ public partial class SettingsView : UserControl
             L.Set(st.Language);
             MainWindow.Instance.ReloadLanguage();
         };
-        foreach (var picker in new[] { StreamFormat, Caching, EpgOffset, CacheHours, UiZoom })
+        foreach (var picker in new[] { StreamFormat, Caching, EpgOffset, CacheHours, UiZoom, ParallelDownloads })
             picker.SelectionChanged += (_, _) => Changed(picker, new RoutedEventArgs());
         Loaded += (_, _) => Motion.Stagger(Page.Children.OfType<FrameworkElement>(), 30, 50);
         _loading = false;
+
+        // Opened from the library with no account open: there is no navigation bar to leave with.
+        BackButton.Visibility = S.Library is null ? Visibility.Visible : Visibility.Collapsed;
+        // Without any playlist added, only what the library uses is shown; the rest would change nothing.
+        if (S.Library is null && S.Accounts.Items.Count == 0) HideListSettings(Page);
     }
+
+    static void HideListSettings(DependencyObject parent)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<FrameworkElement>())
+        {
+            if (child.Tag as string == "list") child.Visibility = Visibility.Collapsed;
+            else HideListSettings(child);
+        }
+    }
+
+    void Back_Click(object sender, RoutedEventArgs e) => MainWindow.Instance.GoBack();
 
     void Changed(object sender, RoutedEventArgs e)
     {
@@ -55,6 +74,8 @@ public partial class SettingsView : UserControl
         st.EpgOffsetHours = int.TryParse(EpgOffset.SelectedTag, out var o) ? o : 0;
         st.CacheHours = int.TryParse(CacheHours.SelectedTag, out var h) ? h : 24;
         st.UiZoom = int.TryParse(UiZoom.SelectedTag, out var z) ? z : 100;
+        st.MaxParallelDownloads = int.TryParse(ParallelDownloads.SelectedTag, out var p) ? p : 1;
+        st.ReconnectSlowDownloads = ReconnectDownloads.IsChecked == true;
         st.HardwareDecoding = HwDecoding.IsChecked == true;
         st.AutoPlayNextEpisode = AutoNext.IsChecked == true;
         st.AutoPlayLastChannel = AutoLast.IsChecked == true;
@@ -73,6 +94,17 @@ public partial class SettingsView : UserControl
         if (ua == S.Settings.UserAgent) return;
         S.Settings.UserAgent = ua;
         S.SaveSettings();
+    }
+
+    void ChangeDownloadFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = L.T("Carpeta de descargas") };
+        if (Directory.Exists(DownloadManager.I.Folder)) dialog.InitialDirectory = DownloadManager.I.Folder;
+        if (dialog.ShowDialog(MainWindow.Instance) != true) return;
+        S.Settings.DownloadFolder = dialog.FolderName;
+        S.SaveSettings();
+        DownloadFolderText.Text = DownloadManager.I.Folder;
+        MainWindow.Instance.Toast("Las próximas descargas se guardarán en la nueva carpeta");
     }
 
     void ChangePin_Click(object sender, RoutedEventArgs e)

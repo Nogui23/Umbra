@@ -23,6 +23,12 @@ public sealed class Settings
     public bool StartFullscreen { get; set; } = true;
     /// <summary>Extra interface zoom in percent, applied on top of the automatic scale for the screen size.</summary>
     public int UiZoom { get; set; } = 100;
+    /// <summary>Folder for downloaded movies and episodes; empty for the default (Videos\Umbra).</summary>
+    public string DownloadFolder { get; set; } = "";
+    /// <summary>Downloads running at once (1 to 3). Each one uses a connection of the account.</summary>
+    public int MaxParallelDownloads { get; set; } = 1;
+    /// <summary>Reconnect a download when the provider slows it down. Off by default: it works around the provider's limit.</summary>
+    public bool ReconnectSlowDownloads { get; set; }
 }
 
 /// <summary>Per-account state: favourites, resume points, watched episodes, locked categories, recent channels.</summary>
@@ -103,7 +109,13 @@ public sealed class AccountStore
     }
 
     static bool SameLogin(Account a, Account b) =>
-        a.Type == b.Type && (a.Type == AccountType.Xtream
-            ? string.Equals(a.Server, b.Server, StringComparison.OrdinalIgnoreCase) && a.Username == b.Username
-            : string.Equals(a.M3uSource, b.M3uSource, StringComparison.OrdinalIgnoreCase));
+        a.Type == b.Type && a.Type switch
+        {
+            AccountType.Xtream or AccountType.Jellyfin =>
+                string.Equals(a.Server, b.Server, StringComparison.OrdinalIgnoreCase) && a.Username == b.Username,
+            AccountType.Folder => string.Equals(a.Server.TrimEnd('\\', '/'), b.Server.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase),
+            AccountType.Plex => string.Equals(a.Server, b.Server, StringComparison.OrdinalIgnoreCase)
+                                && (a.Username.Length > 0 || b.Username.Length > 0 ? a.Username == b.Username : a.Password == b.Password),
+            _ => string.Equals(a.M3uSource, b.M3uSource, StringComparison.OrdinalIgnoreCase),
+        };
 }

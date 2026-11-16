@@ -10,13 +10,18 @@ public partial class LoginView : UserControl
 {
     readonly AppState S = AppState.I;
     Account? _editing;
+    string _plexPassword = "", _plexCode = ""; // only until plex.tv turns them into a token
 
     public LoginView(string? error = null)
     {
         InitializeComponent();
         Tabs.SelectionChanged += (_, _) => ShowTab(animate: true);
+        PlexMode.SelectionChanged += (_, _) => ShowPlexMode();
         LanguageButton.Content = L.IsEnglish ? "Español" : "English";
+        FolderHint.Text = L.T(@"De este equipo o de tu NAS, por ejemplo \\NAS\Vídeos. Los archivos «Serie S01E02» se agrupan como series.");
         RefreshAccounts();
+        var saved = DownloadManager.I.Items.Count(i => i.IsCompleted);
+        LibraryText.Text = saved > 0 ? L.T("Biblioteca · {0}", saved) : L.T("Biblioteca");
         var hasAccounts = S.Accounts.Items.Count > 0;
         if (hasAccounts) ShowPicker(animate: false);
         else ShowForm(animate: false);
@@ -56,10 +61,17 @@ public partial class LoginView : UserControl
 
     void ShowTab(bool animate)
     {
-        var xtream = Tabs.SelectedIndex == 0;
-        XtreamForm.Visibility = xtream ? Visibility.Visible : Visibility.Collapsed;
-        M3uForm.Visibility = xtream ? Visibility.Collapsed : Visibility.Visible;
-        if (animate) Motion.Enter(xtream ? XtreamForm : M3uForm, 0, 10, 320);
+        var forms = new FrameworkElement[] { XtreamForm, M3uForm, JellyfinForm, FolderForm, PlexForm };
+        for (var i = 0; i < forms.Length; i++)
+            forms[i].Visibility = i == Tabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
+        if (animate) Motion.Enter(forms[Math.Clamp(Tabs.SelectedIndex, 0, forms.Length - 1)], 0, 10, 320);
+    }
+
+    void ShowPlexMode()
+    {
+        var token = PlexMode.SelectedIndex == 1;
+        PlexUserPanel.Visibility = token ? Visibility.Collapsed : Visibility.Visible;
+        PlexTokenPanel.Visibility = token ? Visibility.Visible : Visibility.Collapsed;
     }
 
     void ShowError(string message)
@@ -77,7 +89,7 @@ public partial class LoginView : UserControl
         ConnectText.Opacity = busy ? 0 : 1;
         ConnectButton.IsEnabled = !busy;
         AccountsList.IsEnabled = !busy;
-        Tabs.IsEnabled = XtreamForm.IsEnabled = M3uForm.IsEnabled = !busy;
+        Tabs.IsEnabled = XtreamForm.IsEnabled = M3uForm.IsEnabled = JellyfinForm.IsEnabled = FolderForm.IsEnabled = PlexForm.IsEnabled = !busy;
         if (busy) HideError();
     }
 
@@ -104,6 +116,62 @@ public partial class LoginView : UserControl
                 Password = pass,
                 Name = Text.FirstNonEmpty(XName.Text, $"{user} · {Account.HostOf(normalized)}"),
             };
+        }
+        else if (Tabs.SelectedIndex == 2)
+        {
+            var server = JServer.Text.Trim();
+            var user = JUser.Text.Trim();
+            if (server.Length == 0 || user.Length == 0)
+            {
+                ShowError("Escribe la dirección del servidor y el usuario.");
+                return;
+            }
+            var normalized = XtreamSource.NormalizeServer(server);
+            account = new Account
+            {
+                Type = AccountType.Jellyfin,
+                Server = normalized,
+                Username = user,
+                Password = JPass.Password,
+                Name = Text.FirstNonEmpty(JName.Text, $"{user} · {Account.HostOf(normalized)}"),
+            };
+        }
+        else if (Tabs.SelectedIndex == 4)
+        {
+            var byToken = PlexMode.SelectedIndex == 1;
+            var user = PUser.Text.Trim();
+            var token = PToken.Password.Trim();
+            if (byToken && token.Length == 0)
+            {
+                ShowError("Escribe el token de Plex.");
+                return;
+            }
+            if (!byToken && (user.Length == 0 || PPass.Password.Length == 0))
+            {
+                ShowError("Escribe tu usuario y tu contraseña de Plex.");
+                return;
+            }
+            (_plexPassword, _plexCode) = byToken ? ("", "") : (PPass.Password, PCode.Text);
+            var server = PServer.Text.Trim();
+            account = new Account
+            {
+                Type = AccountType.Plex,
+                Server = server.Length > 0 ? XtreamSource.NormalizeServer(server) : "",
+                Username = byToken ? _editing?.Username ?? "" : user,
+                Password = byToken ? token : "", // the token; with user and password it is asked for when connecting
+                Name = Text.FirstNonEmpty(PName.Text, byToken ? "" : user, "Plex"),
+            };
+        }
+        else if (Tabs.SelectedIndex == 3)
+        {
+            var folder = FPath.Text.Trim().Trim('"');
+            if (folder.Length == 0)
+            {
+                ShowError("Escribe la carpeta o elígela con el botón.");
+                return;
+            }
+            var label = Path.GetFileName(folder.TrimEnd('\\', '/'));
+            account = new Account { Type = AccountType.Folder, Server = folder, Name = Text.FirstNonEmpty(FName.Text, label, folder) };
         }
         else
         {
@@ -134,7 +202,20 @@ public partial class LoginView : UserControl
         SetBusy(true);
         try
         {
+            if (account.Type == AccountType.Plex && account.Password.Length == 0)
+            {
+                account.Password = await PlexSource.SignInAsync(account.Username, _plexPassword, _plexCode, CancellationToken.None);
+                _plexPassword = _plexCode = "";
+            }
             var source = ContentSources.Create(account, S.Settings);
+            if (source is PlexSource plex)
+            {
+                // Keeps the server that answered and the token it accepts, so the next start goes straight to it.
+                await plex.ConnectAsync(CancellationToken.None);
+                account.Server = plex.BaseUrl;
+                account.Password = plex.Token;
+                source = ContentSources.Create(account, S.Settings);
+            }
             if (source is XtreamSource xtream)
             {
                 AccountInfo? info = null;
@@ -162,6 +243,11 @@ public partial class LoginView : UserControl
                 }
             }
 
+            // Checked before the account is saved, so a wrong password or folder is not kept.
+            if (source is JellyfinSource jellyfin) await jellyfin.SignInAsync(CancellationToken.None);
+            if (source is FolderSource folder && !await Task.Run(() => Directory.Exists(folder.Root)))
+                throw new SourceException("No se puede abrir la carpeta. Comprueba que existe y, si es de un NAS, que está encendido y tienes acceso desde Windows.");
+
             account = S.Accounts.Upsert(account);
             S.Accounts.Save();
             await MainWindow.Instance.OpenAccountAsync(account, source, force: _editing is not null);
@@ -180,6 +266,8 @@ public partial class LoginView : UserControl
         SetBusy(true);
         await MainWindow.Instance.OpenAccountAsync(account, ContentSources.Create(account, S.Settings), force: false);
     }
+
+    void Library_Click(object sender, RoutedEventArgs e) => MainWindow.Instance.ShowLibraryOffline();
 
     void Add_Click(object sender, RoutedEventArgs e)
     {
@@ -201,7 +289,31 @@ public partial class LoginView : UserControl
         FormTitle.Text = L.T("Editar cuenta");
         CancelEditButton.Visibility = Visibility.Visible;
         ConnectText.Text = L.T("Guardar y conectar");
-        if (account.Type == AccountType.Xtream && account.M3uSource.Length == 0)
+        if (account.Type == AccountType.Plex)
+        {
+            // What is stored is the token, so that is what can be edited.
+            Tabs.SelectedIndex = 4;
+            PlexMode.SelectedIndex = 1;
+            ShowPlexMode();
+            PName.Text = account.Name;
+            PServer.Text = account.Server;
+            PToken.Password = account.Password;
+        }
+        else if (account.Type == AccountType.Jellyfin)
+        {
+            Tabs.SelectedIndex = 2;
+            JName.Text = account.Name;
+            JServer.Text = account.Server;
+            JUser.Text = account.Username;
+            JPass.Password = account.Password;
+        }
+        else if (account.Type == AccountType.Folder)
+        {
+            Tabs.SelectedIndex = 3;
+            FName.Text = account.Name;
+            FPath.Text = account.Server;
+        }
+        else if (account.Type == AccountType.Xtream && account.M3uSource.Length == 0)
         {
             Tabs.SelectedIndex = 0;
             XName.Text = account.Name;
@@ -222,11 +334,15 @@ public partial class LoginView : UserControl
     void ResetForm()
     {
         _editing = null;
-        FormTitle.Text = L.T("Conecta tu IPTV");
+        FormTitle.Text = L.T("Conecta tu contenido");
         CancelEditButton.Visibility = Visibility.Collapsed;
         ConnectText.Text = L.T("Conectar");
-        foreach (var tb in new[] { XName, XServer, XUser, MName, MUrl, MEpg }) tb.Clear();
+        foreach (var tb in new[] { XName, XServer, XUser, MName, MUrl, MEpg, JName, JServer, JUser, FName, FPath, PUser, PCode, PServer, PName }) tb.Clear();
         XPass.Clear();
+        JPass.Clear();
+        PPass.Clear();
+        PToken.Clear();
+        _plexPassword = _plexCode = "";
         HideError();
     }
 
@@ -258,6 +374,12 @@ public partial class LoginView : UserControl
         S.SaveSettings();
         L.Set(S.Settings.Language);
         MainWindow.Instance.ReloadLanguage();
+    }
+
+    void BrowseFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = L.T("Carpeta con tus vídeos") };
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true) FPath.Text = dialog.FolderName;
     }
 
     void Browse_Click(object sender, RoutedEventArgs e)
