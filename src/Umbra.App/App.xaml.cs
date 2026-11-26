@@ -37,15 +37,12 @@ public partial class App : Application
             window.Height = height;
         }
         window.Show();
+        if (!Quiet) DownloadManager.I.Start(new DispatcherSynchronizationContext(Dispatcher));
+        UpdateNotice.OnStartup();
 
         if (SelfTest.TryStart(window, e.Args)) return;
 
-        var state = AppState.I;
-        var last = state.Accounts.Items.FirstOrDefault(a => a.Id == state.Settings.LastAccountId);
-        if (last is not null)
-            _ = window.OpenAccountAsync(last, ContentSources.Create(last, state.Settings), force: false);
-        else
-            window.ShowLogin();
+        window.Start();
     }
 
     static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)

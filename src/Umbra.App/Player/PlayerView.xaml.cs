@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,6 +26,10 @@ public sealed class PlayItem
     public string? ResumeKey { get; init; }
     public long StartMs { get; init; }
     public Channel? Channel { get; init; }
+    /// <summary>For an episode: its series ("series:ID"), so «Seguir viendo» can follow the series.</summary>
+    public string? SeriesKey { get; init; }
+    /// <summary>For an episode: «T2 E5».</summary>
+    public string? EpisodeLabel { get; init; }
 }
 
 /// <summary>
@@ -51,6 +56,15 @@ public partial class PlayerView : UserControl
     readonly DispatcherTimer _toastTimer;
     readonly DispatcherTimer _retryTimer;
     readonly DispatcherTimer _liveTimer;
+    readonly DispatcherTimer _numberTimer;
+    readonly DispatcherTimer _sleepTimer;
+    float _rate = 1;            // playback speed, kept for the next videos while the player stays open
+    DateTime? _sleepAt;         // sleep timer: when playback stops
+    bool _sleepAtEnd;           // sleep timer: stop when the current video ends
+    string _number = ""; // channel number being typed
+    // Preferred audio and subtitle tracks are applied once per video, until they are found or chosen by hand.
+    bool _audioSet, _subsSet;
+    readonly Stopwatch _sinceStart = new();
     IReadOnlyList<PlayItem> _items = Array.Empty<PlayItem>();
     int _index;
     Media? _media;
@@ -69,6 +83,16 @@ public partial class PlayerView : UserControl
     internal bool IsClosing => _closing;
     internal bool ReachedPlaying { get; private set; }
     internal bool HadError { get; private set; }
+
+    // For the developer self-test.
+    internal PlayItem? Playing => _items.Count > 0 ? Current : null;
+    internal float Rate => _player.Rate;
+    internal bool IsPlayingNow => _player.IsPlaying;
+    internal string AudioKey => _player.AudioTrackDescription.Where(t => t.Id == _player.AudioTrack).Select(t => KeyOfTrack(TrackType.Audio, t.Id, t.Name)).FirstOrDefault() ?? "";
+    internal string SubtitleKey => _player.Spu < 0 ? TrackLanguage.Off
+        : _player.SpuDescription.Where(t => t.Id == _player.Spu).Select(t => KeyOfTrack(TrackType.Text, t.Id, t.Name)).FirstOrDefault() ?? "";
+    internal string TrackNames => string.Join(" | ", _player.AudioTrackDescription.Select(t => $"a{t.Id}={t.Name}")
+        .Concat(_player.SpuDescription.Select(t => $"s{t.Id}={t.Name}")));
 
     /// <summary>Plays <paramref name="items"/> starting at <paramref name="index"/>; reuses the player if it is open.</summary>
     public static void Open(IReadOnlyList<PlayItem> items, int index)
@@ -143,6 +167,12 @@ public partial class PlayerView : UserControl
         _retryTimer.Tick += (_, _) => { _retryTimer.Stop(); PlayCurrent(); };
         _liveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _liveTimer.Tick += (_, _) => UpdateLiveRow();
+        _numberTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.4) };
+        _numberTimer.Tick += (_, _) => CommitNumber();
+        _sleepTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _sleepTimer.Tick += (_, _) => SleepTick();
+        // Tracks of a stream keep appearing for a while after it starts.
+        _player.ESAdded += (_, _) => Ui(ApplyPreferredTracks);
 
         // The overlay lives in its own transparent window owned by the main one; find it before it is first shown.
         Video.ApplyTemplate();
@@ -225,7 +255,8 @@ public partial class PlayerView : UserControl
         SubtitleText.Visibility = string.IsNullOrEmpty(SubtitleText.Text) ? Visibility.Collapsed : Visibility.Visible;
         SeekRow.Visibility = item.IsLive ? Visibility.Collapsed : Visibility.Visible;
         LiveRow.Visibility = item.IsLive ? Visibility.Visible : Visibility.Collapsed;
-        BackButton10.Visibility = Forward30.Visibility = item.IsLive ? Visibility.Collapsed : Visibility.Visible;
+        BackButton10.Visibility = Forward30.Visibility = SpeedButton.Visibility = item.IsLive ? Visibility.Collapsed : Visibility.Visible;
+        if (item.IsLive && _sleepAtEnd) SetSleep(null, atEnd: false); // a live channel has no end
         PrevButton.Visibility = NextButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         Seek.Value = 0;
         TimeText.Text = LengthText.Text = "0:00";
@@ -235,7 +266,19 @@ public partial class PlayerView : UserControl
         SetPlayGlyph(playing: true);
         ShowStatus("Cargando…", busy: true);
 
-        var media = new Media(Lib, item.Url, FromType.FromLocation);
+        // A downloaded file plays from disk; a stream needs a connection, which the downloads may be using.
+        var local = !item.Url.Contains("://", StringComparison.Ordinal);
+        var downloads = DownloadManager.I;
+        if (!local && downloads.RunningCount > 0 && S.DownloadsLeaveNoConnection)
+        {
+            downloads.Suspended = true;
+            Toast("Descargas en pausa mientras ves el vídeo");
+        }
+        else if (local)
+        {
+            downloads.Suspended = false;
+        }
+        var media = new Media(Lib, item.Url, local ? FromType.FromPath : FromType.FromLocation);
         media.AddOption($":network-caching={S.Settings.NetworkCachingMs}");
         media.AddOption($":http-user-agent={S.Settings.UserAgent}");
         media.AddOption(":http-reconnect");
@@ -247,6 +290,8 @@ public partial class PlayerView : UserControl
 
         var old = _media;
         _media = media;
+        _audioSet = _subsSet = false;
+        _sinceStart.Restart();
         _player.Play(media);
         old?.Dispose();
         Log.Info($"Reproduciendo: {item.Title}");
@@ -317,17 +362,233 @@ public partial class PlayerView : UserControl
     {
         ReachedPlaying = true;
         _player.Volume = (int)Volume.Value;
+        // libVLC starts each video at normal speed.
+        if (!Current.IsLive && Math.Abs(_player.Rate - _rate) > 0.01f) _player.SetRate(_rate);
         HideStatus();
         _retries = 0;
         SetPlayGlyph(playing: true);
         ShowCenterBadge(false);
         ShowControls();
+        ApplyPreferredTracks();
+    }
+
+    // ----- Preferred tracks -----
+
+    /// <summary>Key of the language of a track, from what the video says about it.</summary>
+    string KeyOfTrack(TrackType type, int id, string name)
+    {
+        string? language = null;
+        try
+        {
+            language = _media?.Tracks.FirstOrDefault(t => t.TrackType == type && t.Id == id).Language;
+        }
+        catch (Exception)
+        {
+            // The list of tracks of the media is not always available; the name is enough then.
+        }
+        return TrackLanguage.KeyOf(language, name);
+    }
+
+    /// <summary>
+    /// Picks the audio and subtitles in the languages chosen last time. Runs when the video starts and each time
+    /// a track appears, during the first seconds, and never after the user chose a track by hand.
+    /// </summary>
+    void ApplyPreferredTracks()
+    {
+        if (_items.Count == 0 || _sinceStart.Elapsed > TimeSpan.FromSeconds(20)) return;
+        var st = S.Profile;
+        if (!_audioSet && st.PreferredAudio.Length > 0)
+        {
+            var audio = _player.AudioTrackDescription.Where(t => t.Id >= 0).ToList();
+            var match = audio.FirstOrDefault(t => KeyOfTrack(TrackType.Audio, t.Id, t.Name) == st.PreferredAudio);
+            if (match.Name is not null)
+            {
+                _audioSet = true;
+                if (_player.AudioTrack != match.Id) _player.SetAudioTrack(match.Id);
+            }
+        }
+        if (!_subsSet && st.PreferredSubtitles.Length > 0)
+        {
+            if (st.PreferredSubtitles == TrackLanguage.Off)
+            {
+                // Kept off while the video starts: a stream may switch on a default track a moment later.
+                if (_player.Spu >= 0) _player.SetSpu(-1);
+                return;
+            }
+            var subs = _player.SpuDescription.Where(t => t.Id >= 0).ToList();
+            var match = subs.FirstOrDefault(t => KeyOfTrack(TrackType.Text, t.Id, t.Name) == st.PreferredSubtitles);
+            if (match.Name is not null)
+            {
+                _subsSet = true;
+                if (_player.Spu != match.Id) _player.SetSpu(match.Id);
+            }
+        }
+    }
+
+    // ----- Playback speed -----
+
+    static readonly float[] Speeds = [0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f];
+
+    static string SpeedLabel(float rate) => rate.ToString("0.##", L.Culture) + "×";
+
+    void Speed_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu();
+        foreach (var rate in Speeds)
+        {
+            var item = new MenuItem { Header = rate == 1f ? L.T("Normal ({0})", SpeedLabel(rate)) : SpeedLabel(rate), IsChecked = Math.Abs(rate - _rate) < 0.01f };
+            item.Click += (_, _) => SetSpeed(rate);
+            menu.Items.Add(item);
+        }
+        OpenMenu(menu, (Button)sender);
+    }
+
+    internal void SetSpeed(float rate)
+    {
+        _rate = rate;
+        if (!Current.IsLive) _player.SetRate(rate);
+        SpeedText.Text = SpeedLabel(rate);
+        Toast(L.T("Velocidad {0}", SpeedLabel(rate)));
+    }
+
+    // ----- Sleep timer -----
+
+    void Sleep_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu();
+        var off = new MenuItem { Header = L.T("Desactivado"), IsChecked = _sleepAt is null && !_sleepAtEnd };
+        off.Click += (_, _) => SetSleep(null, atEnd: false);
+        menu.Items.Add(off);
+        foreach (var minutes in new[] { 15, 30, 45, 60, 90, 120 })
+        {
+            var item = new MenuItem { Header = L.T("{0} min", minutes) };
+            item.Click += (_, _) => SetSleep(TimeSpan.FromMinutes(minutes), atEnd: false);
+            menu.Items.Add(item);
+        }
+        if (!Current.IsLive)
+        {
+            var end = new MenuItem { Header = L.T(Current.IsEpisode ? "Al terminar este episodio" : "Al terminar el vídeo"), IsChecked = _sleepAtEnd };
+            end.Click += (_, _) => SetSleep(null, atEnd: true);
+            menu.Items.Add(end);
+        }
+        OpenMenu(menu, (Button)sender);
+    }
+
+    /// <summary>Sets the sleep timer: after <paramref name="after"/>, or at the end of the video; null and false turn it off.</summary>
+    internal void SetSleep(TimeSpan? after, bool atEnd)
+    {
+        _sleepAt = after is { } span ? DateTime.Now + span : null;
+        _sleepAtEnd = atEnd;
+        if (_sleepAt is not null) _sleepTimer.Start();
+        else _sleepTimer.Stop();
+        UpdateSleepText();
+        if (after is { } a) Toast(L.T("Se parará dentro de {0} min", (int)a.TotalMinutes));
+        else if (atEnd) Toast("Se parará al terminar");
+        else Toast("Temporizador desactivado");
+    }
+
+    void UpdateSleepText()
+    {
+        SleepText.Visibility = _sleepAt is not null || _sleepAtEnd ? Visibility.Visible : Visibility.Collapsed;
+        if (_sleepAtEnd)
+        {
+            SleepText.Text = L.T("fin");
+            SleepButton.ToolTip = L.T("Se parará al terminar");
+        }
+        else if (_sleepAt is { } at)
+        {
+            var left = at - DateTime.Now;
+            SleepText.Text = left.TotalMinutes >= 1 ? L.T("{0} min", (int)Math.Ceiling(left.TotalMinutes)) : $"{Math.Max(0, (int)left.TotalSeconds)} s";
+            SleepButton.ToolTip = L.T("Se parará a las {0:HH:mm}", at);
+        }
+        else
+        {
+            SleepButton.ToolTip = L.T("Temporizador de apagado");
+        }
+    }
+
+    void SleepTick()
+    {
+        if (_sleepAt is not { } at) return;
+        UpdateSleepText();
+        var left = at - DateTime.Now;
+        // The last half minute the volume fades out, so it does not stop with a jump.
+        if (left.TotalSeconds is > 0 and < 30) _player.Volume = (int)(Volume.Value * left.TotalSeconds / 30);
+        if (left > TimeSpan.Zero) return;
+        _sleepAt = null;
+        _sleepTimer.Stop();
+        UpdateSleepText();
+        SaveProgress();
+        // A live channel is stopped (it frees the connection); a video is paused where it was.
+        if (Current.IsLive) _player.Stop();
+        else _player.SetPause(true);
+        _player.Volume = (int)Volume.Value;
+        SetPlayGlyph(playing: false);
+        ShowStatus("Reproducción detenida por el temporizador.", busy: false);
+        RetryButton.Visibility = Current.IsLive ? Visibility.Visible : Visibility.Collapsed;
+        ShowControls();
+    }
+
+    // ----- Channel number -----
+
+    /// <summary>Digits typed on live TV make up a channel number; it is tuned after a short pause or with Enter.</summary>
+    void TypeDigit(int digit)
+    {
+        if (_number.Length >= 5) return;
+        _number += digit.ToString(CultureInfo.InvariantCulture);
+        ShowNumber();
+        _numberTimer.Stop();
+        _numberTimer.Start();
+    }
+
+    void ShowNumber()
+    {
+        NumberText.Text = _number;
+        NumberBorder.Visibility = Visibility.Visible;
+        Motion.Fade(NumberBorder, 1, 0);
+    }
+
+    void HideNumber()
+    {
+        _numberTimer.Stop();
+        _number = "";
+        Motion.Fade(NumberBorder, 0, 220, () =>
+        {
+            if (_number.Length == 0) NumberBorder.Visibility = Visibility.Collapsed;
+        });
+    }
+
+    void CommitNumber()
+    {
+        var typed = _number;
+        HideNumber();
+        if (!int.TryParse(typed, NumberStyles.None, CultureInfo.InvariantCulture, out var number) || _items.Count == 0) return;
+        // First in the list being zapped, then in every channel of the account.
+        var index = _items.ToList().FindIndex(i => i.Channel?.Num == number);
+        if (index >= 0)
+        {
+            if (index == _index) return;
+            SaveProgress();
+            _index = index;
+            _retries = 0;
+            PlayCurrent();
+            return;
+        }
+        var lib = S.Library;
+        var channel = lib?.Channels.FirstOrDefault(c => c.Num == number && !S.IsHidden(MediaKind.Live, c.CategoryId));
+        if (lib is null || channel is null)
+        {
+            Toast(L.T("No hay ningún canal {0}", number));
+            return;
+        }
+        OpenChannels(lib.Channels.Where(c => c.CategoryId == channel.CategoryId).ToList(), channel);
     }
 
     void OnPaused()
     {
         SetPlayGlyph(playing: false);
-        ShowCenterBadge(true);
+        // A message in the middle (the sleep timer's) takes the place of the pause badge.
+        ShowCenterBadge(StatusPanel.Visibility != Visibility.Visible);
         ShowControls();
     }
 
@@ -355,6 +616,14 @@ public partial class PlayerView : UserControl
         }
         _ended = true;
         SaveProgress();
+        if (_sleepAtEnd)
+        {
+            SetSleep(null, atEnd: false);
+            SetPlayGlyph(playing: false);
+            ShowStatus("Reproducción detenida por el temporizador.", busy: false);
+            ShowControls();
+            return;
+        }
         if (Current.IsEpisode && S.Settings.AutoPlayNextEpisode && _index + 1 < _items.Count)
         {
             _index++;
@@ -468,13 +737,27 @@ public partial class PlayerView : UserControl
         if (item.IsLive || item.ResumeKey is null) return;
         var time = _player.Time;
         var length = _player.Length;
-        if (_ended || (length > 0 && time > length * 0.94))
+        var watched = _ended || (length > 0 && time > length * 0.94);
+        if (watched)
         {
             S.MarkWatched(item.ResumeKey);
         }
         else if (time > 30_000)
         {
             S.SaveResume(item.ResumeKey, time);
+        }
+
+        // The series stays in «Seguir viendo» pointing at the episode to watch next, and leaves it after the last one.
+        if (item.SeriesKey is not { } series) return;
+        if (watched)
+        {
+            var next = _index + 1 < _items.Count ? _items[_index + 1] : null;
+            if (next is { ResumeKey: { } nextKey } && next.SeriesKey == series) S.SetSeriesProgress(series, nextKey, next.EpisodeLabel ?? "");
+            else S.ForgetSeries(series);
+        }
+        else if (time > 30_000)
+        {
+            S.SetSeriesProgress(series, item.ResumeKey, item.EpisodeLabel ?? "");
         }
     }
 
@@ -623,6 +906,24 @@ public partial class PlayerView : UserControl
     {
         if (_closing || e.Handled || _items.Count == 0) return;
         var channelListFocused = _channelsOpen && ChannelList.IsKeyboardFocusWithin;
+        // Typing a channel number on live TV.
+        if (Current.IsLive && !channelListFocused && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            var digit = e.Key is >= Key.D0 and <= Key.D9 ? e.Key - Key.D0 : e.Key is >= Key.NumPad0 and <= Key.NumPad9 ? e.Key - Key.NumPad0 : -1;
+            if (digit >= 0)
+            {
+                TypeDigit(digit);
+                e.Handled = true;
+                return;
+            }
+            if (_number.Length > 0 && e.Key is Key.Enter or Key.Escape)
+            {
+                if (e.Key == Key.Enter) CommitNumber();
+                else HideNumber();
+                e.Handled = true;
+                return;
+            }
+        }
         switch (e.Key)
         {
             case Key.Space or Key.MediaPlayPause or Key.Play or Key.Pause:
@@ -787,8 +1088,19 @@ public partial class PlayerView : UserControl
         foreach (var track in _player.AudioTrackDescription)
         {
             var id = track.Id;
-            var item = new MenuItem { Header = id < 0 ? L.T("Desactivado") : track.Name, IsChecked = id == current };
-            item.Click += (_, _) => _player.SetAudioTrack(id);
+            var name = track.Name;
+            var item = new MenuItem { Header = id < 0 ? L.T("Desactivado") : name, IsChecked = id == current };
+            item.Click += (_, _) =>
+            {
+                _player.SetAudioTrack(id);
+                _audioSet = true;
+                // Remembered for the next videos.
+                if (id >= 0 && KeyOfTrack(TrackType.Audio, id, name) is { Length: > 0 } key)
+                {
+                    S.Profile.PreferredAudio = key;
+                    S.Profiles.Save();
+                }
+            };
             menu.Items.Add(item);
         }
         if (menu.Items.Count == 0) menu.Items.Add(new MenuItem { Header = L.T("No hay pistas de audio"), IsEnabled = false });
@@ -802,8 +1114,19 @@ public partial class PlayerView : UserControl
         foreach (var track in _player.SpuDescription)
         {
             var id = track.Id;
-            var item = new MenuItem { Header = id < 0 ? L.T("Desactivados") : track.Name, IsChecked = id == current };
-            item.Click += (_, _) => _player.SetSpu(id);
+            var name = track.Name;
+            var item = new MenuItem { Header = id < 0 ? L.T("Desactivados") : name, IsChecked = id == current };
+            item.Click += (_, _) =>
+            {
+                _player.SetSpu(id);
+                _subsSet = true;
+                var key = id < 0 ? TrackLanguage.Off : KeyOfTrack(TrackType.Text, id, name);
+                if (key.Length > 0)
+                {
+                    S.Profile.PreferredSubtitles = key;
+                    S.Profiles.Save();
+                }
+            };
             menu.Items.Add(item);
         }
         if (menu.Items.Count == 0) menu.Items.Add(new MenuItem { Header = L.T("No hay subtítulos en este contenido"), IsEnabled = false });
@@ -847,8 +1170,11 @@ public partial class PlayerView : UserControl
     {
         if (_disposed) return;
         _disposed = true;
+        if (_instance is null) DownloadManager.I.Suspended = false; // the stream is stopped: the connection is free again
         _hideTimer.Stop();
         _toastTimer.Stop();
+        _numberTimer.Stop();
+        _sleepTimer.Stop();
         _retryTimer.Stop();
         _liveTimer.Stop();
         _nowCts?.Cancel();

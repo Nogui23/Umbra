@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
@@ -14,6 +15,7 @@ public partial class MovieDetailView : UserControl, IRefreshable
     readonly AppState S = AppState.I;
     readonly Movie _movie;
     MovieDetail? _detail;
+    DownloadItem? _download;
     bool _entered;
 
     public MovieDetailView(Movie movie)
@@ -28,6 +30,8 @@ public partial class MovieDetailView : UserControl, IRefreshable
         Loaded += async (_, _) =>
         {
             Ui.I.Changed += ApplyLayout;
+            DownloadManager.I.ListChanged += UpdateDownload;
+            UpdateDownload();
             ApplyLayout();
             if (!_entered)
             {
@@ -37,7 +41,12 @@ public partial class MovieDetailView : UserControl, IRefreshable
             }
             await LoadAsync();
         };
-        Unloaded += (_, _) => Ui.I.Changed -= ApplyLayout;
+        Unloaded += (_, _) =>
+        {
+            Ui.I.Changed -= ApplyLayout;
+            DownloadManager.I.ListChanged -= UpdateDownload;
+            Watch(null);
+        };
     }
 
     void ApplyLayout()
@@ -89,7 +98,24 @@ public partial class MovieDetailView : UserControl, IRefreshable
         TrailerButton.Visibility = d.Trailer.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         Motion.Enter(PlotText, 0, 10, 360);
         Motion.Enter(Facts, 80, 10, 360);
+        // A download made before the details were saved (or before they arrived) gets them now.
+        if (S.DownloadOf(ResumeKey) is { Info: null } item) DownloadManager.I.SetInfo(item, InfoOf(d));
     }
+
+    /// <summary>What is kept with the download so the library can show this page without the provider.</summary>
+    DownloadInfo InfoOf(MovieDetail d) => new()
+    {
+        Plot = d.Plot,
+        Genre = d.Genre,
+        Director = d.Director,
+        Cast = d.Cast,
+        ReleaseDate = d.ReleaseDate,
+        Duration = d.Duration.Length > 0 ? FormatDuration(d.Duration) : "",
+        Country = d.Country,
+        Rating = d.Rating > 0 ? d.Rating : _movie.Rating,
+        Poster = Text.FirstNonEmpty(d.Poster, _movie.Image),
+        Backdrop = d.Backdrop,
+    };
 
     static string FormatDuration(string raw)
     {
@@ -117,7 +143,7 @@ public partial class MovieDetailView : UserControl, IRefreshable
     public void Refresh()
     {
         var resume = S.ResumeOf(ResumeKey);
-        ResumeButton.Visibility = resume > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ResumeButton.Visibility = ForgetButton.Visibility = resume > 0 ? Visibility.Visible : Visibility.Collapsed;
         ResumeText.Text = L.T("Continuar desde {0}", FormatTime(resume));
         PlayButton.Style = (Style)FindResource(resume > 0 ? "SubtleButton" : "AccentButton");
         PlayButton.Padding = new Thickness(resume > 0 ? 22 : 28, 14, resume > 0 ? 22 : 28, 14);
@@ -125,6 +151,58 @@ public partial class MovieDetailView : UserControl, IRefreshable
         PlayIcon.Text = resume > 0 ? "" : "";
         PlayIcon.FontSize = resume > 0 ? 14 : 12;
         UpdateFav();
+        if (IsLoaded) UpdateDownload();
+    }
+
+    // ----- Download -----
+
+    /// <summary>Follows the state of this movie's download so the button shows its progress.</summary>
+    void Watch(DownloadItem? item)
+    {
+        if (ReferenceEquals(_download, item)) return;
+        if (_download is not null) _download.PropertyChanged -= OnDownloadChanged;
+        _download = item;
+        if (item is not null) item.PropertyChanged += OnDownloadChanged;
+    }
+
+    void OnDownloadChanged(object? sender, PropertyChangedEventArgs e) => ShowDownload();
+
+    void UpdateDownload()
+    {
+        Watch(S.DownloadOf(ResumeKey));
+        ShowDownload();
+    }
+
+    void ShowDownload()
+    {
+        var d = _download;
+        DownloadIcon.Text = d is { IsCompleted: true } ? "" : "";
+        DownloadText.Text = d?.State switch
+        {
+            null => L.T("Descargar"),
+            DownloadState.Completed => L.T("Descargada"),
+            DownloadState.Downloading => L.T("Descargando {0}", d.PercentText),
+            DownloadState.Queued => L.T("En cola"),
+            DownloadState.Paused => L.T("Descarga en pausa"),
+            _ => L.T("Error en la descarga"),
+        };
+        DownloadButton.ToolTip = d is null ? null : L.T("Ver en Descargas");
+    }
+
+    void Download_Click(object sender, RoutedEventArgs e)
+    {
+        if (S.Source is null) return;
+        if (_download is not null)
+        {
+            MainWindow.Instance.ShowDownloads();
+            return;
+        }
+        var title = TitleText.Text;
+        if (!S.StartDownload(ResumeKey, S.Source.GetMovieUrl(_movie), title, "", _movie.Image, null, title, _movie.Extension, isEpisode: false,
+                info: _detail is null ? null : InfoOf(_detail)))
+            return;
+        Motion.Pop(DownloadIcon, 0.6, 380);
+        MainWindow.Instance.Toast("Añadida a descargas", "");
     }
 
     void UpdateFav()
@@ -147,7 +225,7 @@ public partial class MovieDetailView : UserControl, IRefreshable
             new PlayItem
             {
                 Title = TitleText.Text,
-                Url = S.Source.GetMovieUrl(_movie),
+                Url = S.PlayUrl(ResumeKey, S.Source.GetMovieUrl(_movie)),
                 ResumeKey = ResumeKey,
                 StartMs = startMs,
             },
@@ -157,6 +235,14 @@ public partial class MovieDetailView : UserControl, IRefreshable
     void Play_Click(object sender, RoutedEventArgs e) => Play(0);
 
     void Resume_Click(object sender, RoutedEventArgs e) => Play(S.ResumeOf(ResumeKey));
+
+    /// <summary>Forgets the resume point: the «Continuar desde» button goes away and so does the entry in «Seguir viendo».</summary>
+    void Forget_Click(object sender, RoutedEventArgs e)
+    {
+        S.ClearProgress(ResumeKey);
+        Refresh();
+        MainWindow.Instance.Toast("Quitada de «Seguir viendo»", "");
+    }
 
     void Fav_Click(object sender, RoutedEventArgs e)
     {
@@ -170,8 +256,20 @@ public partial class MovieDetailView : UserControl, IRefreshable
     {
         var t = _detail?.Trailer ?? "";
         if (t.Length == 0) return;
-        var url = t.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? t : "https://www.youtube.com/watch?v=" + Uri.EscapeDataString(t);
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        // The provider writes this field: only a web page is ever opened, never a file or another kind of link.
+        string url;
+        if (Uri.TryCreate(t, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;
+            url = uri.AbsoluteUri;
+        }
+        else
+        {
+            if (t.Length > 64 || !t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')) return;
+            url = "https://www.youtube.com/watch?v=" + Uri.EscapeDataString(t);
+        }
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) { Sheet.Warn("No se pudo abrir la página", ex.Message); }
     }
 
     void Back_Click(object sender, RoutedEventArgs e) => MainWindow.Instance.GoBack();

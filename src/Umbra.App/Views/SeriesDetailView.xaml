@@ -48,6 +48,13 @@
                                     <TextBlock x:Name="FavText" Text="{local:T 'Favorita'}"/>
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="SeasonDownloadButton" Style="{StaticResource SubtleButton}" Padding="22,14" Margin="0,0,10,10"
+                                    Click="SeasonDownload_Click" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE896;" Margin="0,0,9,0"/>
+                                    <TextBlock x:Name="SeasonDownloadText" Text="{local:T 'Descargar temporada'}"/>
+                                </StackPanel>
+                            </Button>
                         </WrapPanel>
                         <TextBlock x:Name="PlotText" TextWrapping="Wrap" FontSize="15.5" LineHeight="25" MaxWidth="840" HorizontalAlignment="Left"
                                    Foreground="#E6F5F5F7"/>
@@ -71,6 +78,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="214"/>
                                         <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <local:AspectBox Ratio="0.5625" CornerRadius="12">
@@ -100,8 +108,26 @@
                                             <TextBlock Text="{local:T 'Visto'}" FontSize="12.5"/>
                                         </StackPanel>
                                     </Border>
+                                    <Button Grid.Column="3" Style="{StaticResource IconButton}" VerticalAlignment="Center" Margin="0,0,8,0"
+                                            Click="EpisodeDownload_Click" Tag="{Binding}" ToolTip="{local:T 'Descargar'}">
+                                        <Grid>
+                                            <TextBlock x:Name="DownloadGlyph" Text="&#xE896;" Foreground="{StaticResource MutedBrush}"/>
+                                            <TextBlock x:Name="DownloadBadge" Text="{Binding Download.Badge}" FontFamily="{StaticResource UiFont}"
+                                                       FontSize="11.5" FontWeight="SemiBold" Visibility="Collapsed"/>
+                                        </Grid>
+                                    </Button>
                                 </Grid>
                             </Button>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding Download.IsActive}" Value="True">
+                                    <Setter TargetName="DownloadGlyph" Property="Visibility" Value="Collapsed"/>
+                                    <Setter TargetName="DownloadBadge" Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Download.IsCompleted}" Value="True">
+                                    <Setter TargetName="DownloadGlyph" Property="Text" Value="&#xE73E;"/>
+                                    <Setter TargetName="DownloadGlyph" Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>

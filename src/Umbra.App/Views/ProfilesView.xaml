@@ -1,0 +1,22 @@
+<UserControl x:Class="Umbra.App.ProfilesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Umbra.App">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="40,0,40,60">
+            <Button x:Name="BackButton" Style="{StaticResource GlassIconButton}" Content="&#xE72B;" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Width="46" Height="46" Margin="8,10,0,0" ToolTip="{local:T 'Volver (Esc)'}" Click="Back_Click" Visibility="Collapsed"/>
+            <StackPanel x:Name="Page" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,60,0,0">
+                <TextBlock x:Name="TitleText" Style="{StaticResource LargeTitle}" FontSize="44" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="SubText" Foreground="{StaticResource MutedBrush}" FontSize="16" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                <WrapPanel x:Name="Tiles" HorizontalAlignment="Center" Margin="0,40,0,0" MaxWidth="1100"/>
+                <Button x:Name="ManageButton" Style="{StaticResource SubtleButton}" HorizontalAlignment="Center" Margin="0,30,0,0" Click="Manage_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="ManageIcon" Style="{StaticResource Icon}" Text="&#xE70F;" FontSize="12" Margin="0,0,9,0"/>
+                        <TextBlock x:Name="ManageText"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

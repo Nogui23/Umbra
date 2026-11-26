@@ -8,6 +8,16 @@
             <Button x:Name="LanguageButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Center" VerticalAlignment="Bottom"
                     Margin="0,0,0,-46" Click="Language_Click"/>
 
+            <!-- What is already downloaded plays without signing in -->
+            <Button x:Name="LibraryButton" Style="{StaticResource SubtleButton}" Padding="18,10" FontSize="13.5"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,0,0" Panel.ZIndex="1" Click="Library_Click"
+                    ToolTip="{local:T 'Ver lo que has descargado, sin abrir ninguna lista'}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Style="{StaticResource Icon}" Text="&#xE8B7;" Margin="0,0,9,0"/>
+                    <TextBlock x:Name="LibraryText"/>
+                </StackPanel>
+            </Button>
+
             <!-- Saved accounts: pick one and you are in -->
             <StackPanel x:Name="PickerPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
                 <TextBlock Text="{local:T '¿Quién va a ver?'}" Style="{StaticResource LargeTitle}" FontSize="44" HorizontalAlignment="Center"/>
@@ -80,7 +90,7 @@
             </StackPanel>
 
             <!-- Add / edit an account -->
-            <Border x:Name="FormPanel" Style="{StaticResource Card}" Width="470" Padding="38,32,38,32"
+            <Border x:Name="FormPanel" Style="{StaticResource Card}" Width="620" Padding="38,32,38,32"
                     HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
                 <StackPanel>
                     <Button x:Name="BackToPicker" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Margin="-14,-8,0,10"
@@ -90,10 +100,10 @@
                             <TextBlock Text="{local:T 'Cuentas'}"/>
                         </StackPanel>
                     </Button>
-                    <TextBlock x:Name="FormTitle" Text="{local:T 'Conecta tu IPTV'}" Style="{StaticResource LargeTitle}" FontSize="30"/>
+                    <TextBlock x:Name="FormTitle" Text="{local:T 'Conecta tu contenido'}" Style="{StaticResource LargeTitle}" FontSize="30"/>
                     <TextBlock Text="{local:T 'Tus datos se guardan cifrados, solo en este equipo.'}" Style="{StaticResource Caption}" FontSize="13.5"
                                Margin="1,6,0,0" TextWrapping="Wrap"/>
-                    <local:Segmented x:Name="Tabs" Items="Xtream Codes|Lista M3U" Margin="0,24,0,0"/>
+                    <local:Segmented x:Name="Tabs" Items="Xtream|M3U|Jellyfin · Emby|Carpeta · NAS|Plex" Margin="0,24,0,0"/>
 
                     <StackPanel x:Name="XtreamForm">
                         <TextBlock Text="{local:T 'Servidor'}" Style="{StaticResource FieldLabel}"/>
@@ -124,6 +134,61 @@
                         <TextBox x:Name="MEpg"/>
                         <TextBlock Text="{local:T 'Nombre (opcional)'}" Style="{StaticResource FieldLabel}"/>
                         <TextBox x:Name="MName"/>
+                    </StackPanel>
+
+                    <!-- A Jellyfin or Emby server: movies and series, played as they are stored -->
+                    <StackPanel x:Name="JellyfinForm" Visibility="Collapsed">
+                        <TextBlock Text="{local:T 'Servidor'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="JServer"/>
+                        <TextBlock Text="{local:T 'Por ejemplo, http://192.168.1.10:8096'}" FontSize="12" Foreground="{StaticResource FaintBrush}" Margin="4,6,0,0"/>
+                        <TextBlock Text="{local:T 'Usuario'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="JUser"/>
+                        <TextBlock Text="{local:T 'Contraseña (si tiene)'}" Style="{StaticResource FieldLabel}"/>
+                        <PasswordBox x:Name="JPass"/>
+                        <TextBlock Text="{local:T 'Nombre (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="JName"/>
+                    </StackPanel>
+
+                    <!-- A folder of this computer or of a NAS -->
+                    <StackPanel x:Name="FolderForm" Visibility="Collapsed">
+                        <TextBlock Text="{local:T 'Carpeta con tus vídeos'}" Style="{StaticResource FieldLabel}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="FPath"/>
+                            <Button Grid.Column="1" Style="{StaticResource GlassIconButton}" Width="44" Height="44" Margin="8,0,0,0"
+                                    Content="&#xE8B7;" ToolTip="{local:T 'Elegir una carpeta'}" Click="BrowseFolder_Click"/>
+                        </Grid>
+                        <TextBlock x:Name="FolderHint" FontSize="12" Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap" Margin="4,6,0,0"/>
+                        <TextBlock Text="{local:T 'Nombre (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="FName"/>
+                    </StackPanel>
+
+                    <!-- A Plex server: with the Plex account, or with a token -->
+                    <StackPanel x:Name="PlexForm" Visibility="Collapsed">
+                        <local:Segmented x:Name="PlexMode" Items="Usuario y contraseña|Token" Margin="0,18,0,0"/>
+                        <StackPanel x:Name="PlexUserPanel">
+                            <TextBlock Text="{local:T 'Usuario o correo de Plex'}" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="PUser"/>
+                            <TextBlock Text="{local:T 'Contraseña'}" Style="{StaticResource FieldLabel}"/>
+                            <PasswordBox x:Name="PPass"/>
+                            <TextBlock Text="{local:T 'Código de verificación (solo si usas dos pasos)'}" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="PCode"/>
+                            <TextBlock Text="{local:T 'La contraseña solo se envía a plex.tv para obtener un token; Umbra guarda el token, no la contraseña.'}"
+                                       FontSize="12" Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap" Margin="4,6,0,0"/>
+                        </StackPanel>
+                        <StackPanel x:Name="PlexTokenPanel" Visibility="Collapsed">
+                            <TextBlock Text="{local:T 'Token de Plex (X-Plex-Token)'}" Style="{StaticResource FieldLabel}"/>
+                            <PasswordBox x:Name="PToken"/>
+                        </StackPanel>
+                        <TextBlock Text="{local:T 'Servidor (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="PServer"/>
+                        <TextBlock Text="{local:T 'Déjalo vacío para usar el servidor de tu cuenta. Por ejemplo, http://192.168.1.10:32400'}"
+                                   FontSize="12" Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap" Margin="4,6,0,0"/>
+                        <TextBlock Text="{local:T 'Nombre (opcional)'}" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="PName"/>
                     </StackPanel>
 
                     <Border x:Name="ErrorBox" Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineStrong}" BorderThickness="1"
